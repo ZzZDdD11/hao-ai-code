@@ -11,10 +11,24 @@ spring:
     redis:
       host: localhost
       port: 6379
-      user: root
-      password:
+      user: ''
       ttl: 3600
       database: 1
+      password: ''
+    jedis:
+      pool:
+        # 关键配置：开启借用前检查
+        test-on-borrow: true
+        # 关键配置：开启归还前检查
+        test-on-return: true
+        # 也可以开启空闲时检查
+        test-while-idle: true
+        # 每次检查的时间间隔 (毫秒)
+        time-between-eviction-runs: 30000
+        max-active: 8
+        max-wait: -1ms
+        max-idle: 8
+        min-idle: 0
   session:
     store-type: redis
     timeout: 2592000
@@ -35,22 +49,54 @@ knife4j:
 
 langchain4j:
   open-ai:
-    chat-model:
-      base-url: https://api.deepseek.com
-      api-key: sk-a71d3c327e5e4475b7954039dc2ed77b
-      model-name: deepseek-chat
+    streaming-chat-model:
+      base-url: https://open.bigmodel.cn/api/paas/v4
+      api-key: ${BIGMODEL_API_KEY}
+      model-name: glm-4.6
       log-requests: true
       log-responses: true
       max-tokens: 8192
       strict-json-schema: true
       response-format: json_object
-    streaming-chat-model:
+    reasoning-streaming-chat-model:
+      base-url: https://open.bigmodel.cn/api/paas/v4
+      api-key: ${BIGMODEL_API_KEY}
+      model-name: glm-4.6
+      log-requests: true
+      log-responses: true
+      max-tokens: 8192
+      strict-json-schema: true
+      temperature: 0.1
+      response-format: json_object
+    routing-chat-model:
       base-url: https://api.deepseek.com
-      api-key: sk-a71d3c327e5e4475b7954039dc2ed77b
+      api-key: ${DEEPSEEK_API_KEY}
+      model-name: deepseek-chat
+      log-requests: true
+      log-responses: true
+      max-tokens: 8192
+    chat-model:
+      base-url: https://api.deepseek.com
+      api-key: ${DEEPSEEK_API_KEY}
       model-name: deepseek-chat
       log-requests: true
       log-responses: true
       max-tokens: 8192
 
-
-
+# 添加 COS 对象存储配置（需要从腾讯云获取）
+cos:
+  client:
+    host: https://hao1-1348297834.cos.ap-beijing.myqcloud.com
+    secretId: ${COS_SECRET_ID}
+    secretKey: ${COS_SECRET_KEY}
+    region: ap-beijing
+    bucket: hao1-1348297834
+# 配置actuator的监控端点，默认只暴露健康检查
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: always

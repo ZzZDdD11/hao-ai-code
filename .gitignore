@@ -1,7 +1,10 @@
 tmp
 HELP.md
 application-local.yml
+application-prod.yml
 target/
+.env
+tmp/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
@@ -33,3 +36,5 @@ build/
 
 ### VS Code ###
 .vscode/
+
+*.md

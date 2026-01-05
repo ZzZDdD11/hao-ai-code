@@ -1,5 +1,6 @@
 package com.hao.haoaicode.service;
 
+import com.hao.haoaicode.model.dto.app.AppAddRequest;
 import com.hao.haoaicode.model.dto.app.AppQueryRequest;
 import com.hao.haoaicode.model.entity.App;
 import com.hao.haoaicode.model.entity.User;
@@ -39,4 +40,8 @@ public interface AppService extends IService<App> {
      */
      Flux<String> chatToGenCode(Long appId, String message, User loginUser);
 
-}
+    public void generateAppScreenshotAsync(Long appId, String appUrl);
+
+    public Long createApp(AppAddRequest appAddRequest, User loginUser);
+
+    }

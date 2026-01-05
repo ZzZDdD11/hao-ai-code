@@ -5,7 +5,7 @@ import com.hao.haoaicode.ai.model.MultiFileCodeResult;
 import com.hao.haoaicode.core.CodeParser;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.AssertionsKt.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 
 class CodeParserTest {

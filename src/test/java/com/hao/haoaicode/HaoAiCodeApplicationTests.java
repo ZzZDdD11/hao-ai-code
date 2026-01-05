@@ -2,6 +2,7 @@ package com.hao.haoaicode;
 
 import com.hao.haoaicode.core.AiCodeGeneratorFacade;
 import com.hao.haoaicode.model.enums.CodeGenTypeEnum;
+import com.hao.haoaicode.utils.WebScreenshotUtils;
 import jakarta.annotation.Resource;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -40,5 +41,15 @@ class HaoAiCodeApplicationTests {
         String completeContent = String.join("", result);
         Assertions.assertNotNull(completeContent);
     }
+
+
+        @Test
+        void saveWebPageScreenshot() {
+            String testUrl = "https://www.codefather.cn";
+            String webPageScreenshot = WebScreenshotUtils.saveWebPageScreenshot(testUrl);
+            Assertions.assertNotNull(webPageScreenshot);
+        }
+
+
 
 }

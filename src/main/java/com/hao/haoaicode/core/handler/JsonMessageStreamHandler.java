@@ -5,9 +5,12 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import com.hao.haoaicode.ai.model.message.*;
+import com.hao.haoaicode.constant.AppConstant;
+import com.hao.haoaicode.core.builder.VueProjectBuilder;
 import com.hao.haoaicode.model.entity.User;
 import com.hao.haoaicode.model.enums.ChatHistoryMessageTypeEnum;
 import com.hao.haoaicode.service.ChatHistoryService;
+import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
@@ -22,7 +25,8 @@ import java.util.Set;
 @Slf4j
 @Component
 public class JsonMessageStreamHandler {
-
+    @Resource
+    private VueProjectBuilder vueProjectBuilder;
     // 用于累积不完整的 JSON 块
     private final StringBuilder jsonBuffer = new StringBuilder();
 
