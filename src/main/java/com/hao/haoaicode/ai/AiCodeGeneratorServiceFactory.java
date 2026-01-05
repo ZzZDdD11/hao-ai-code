@@ -27,7 +27,9 @@ import reactor.core.publisher.Flux;
 
 import java.time.Duration;
 import java.util.Collections; // 导入 Collections 类
-
+/**
+ * 用来创建Ai 服务实例
+ */
 @Slf4j
 @Configuration
 public class AiCodeGeneratorServiceFactory {

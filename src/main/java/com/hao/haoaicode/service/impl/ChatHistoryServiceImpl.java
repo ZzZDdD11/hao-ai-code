@@ -40,7 +40,7 @@ public class ChatHistoryServiceImpl extends ServiceImpl<ChatHistoryMapper, ChatH
     @Autowired
     AppService appService;
     /**
-     * 增加对话历史功能
+     * 增加对话历史
      * @param appId
      * @param message
      * @param messageType

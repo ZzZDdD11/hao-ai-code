@@ -29,15 +29,21 @@ public class AiModelMonitorListener implements ChatModelListener {
     public void onRequest(ChatModelRequestContext requestContext) {
         // 记录请求开始时间
         requestContext.attributes().put(REQUEST_START_TIME_KEY, Instant.now());
+        
         // 从监控上下文中获取信息
         MonitorContext context = MonitorContextHolder.getContext();
-        String userId = context.getUserId();
-        String appId = context.getAppId();
-        requestContext.attributes().put(MONITOR_CONTEXT_KEY, context);
+        
+        // ✅ 添加空指针检查
+        if (context != null) {
+            String userId = context.getUserId();
+            String appId = context.getAppId();
+            requestContext.attributes().put(MONITOR_CONTEXT_KEY, context);
+        }
+        
         // 获取模型名称
         String modelName = requestContext.chatRequest().modelName();
         // 记录请求指标
-        aiModelMetricsCollector.recordRequest( modelName, "started");
+        aiModelMetricsCollector.recordRequest(modelName, "started");
     }
 
     @Override
@@ -46,8 +52,11 @@ public class AiModelMonitorListener implements ChatModelListener {
         Map<Object, Object> attributes = responseContext.attributes();
         // 从监控上下文中获取信息
         MonitorContext context = (MonitorContext) attributes.get(MONITOR_CONTEXT_KEY);
-        String userId = context.getUserId();
-        String appId = context.getAppId();
+        
+        // ✅ 添加空指针检查
+        String userId = context != null ? context.getUserId() : "unknown";
+        String appId = context != null ? context.getAppId() : "unknown";
+        
         // 获取模型名称
         String modelName = responseContext.chatResponse().modelName();
         // 记录成功请求
@@ -62,14 +71,19 @@ public class AiModelMonitorListener implements ChatModelListener {
     public void onError(ChatModelErrorContext errorContext) {
         // 从监控上下文中获取信息
         MonitorContext context = MonitorContextHolder.getContext();
-        String userId = context.getUserId();
-        String appId = context.getAppId();
+        
+        // ✅ 添加空指针检查
+        String userId = context != null ? context.getUserId() : "unknown";
+        String appId = context != null ? context.getAppId() : "unknown";
+        
         // 获取模型名称和错误类型
         String modelName = errorContext.chatRequest().modelName();
         String errorMessage = errorContext.error().getMessage();
+        
         // 记录失败请求
         aiModelMetricsCollector.recordRequest(modelName, "error");
         aiModelMetricsCollector.recordError(modelName, errorMessage);
+        
         // 记录响应时间（即使是错误响应）
         Map<Object, Object> attributes = errorContext.attributes();
         recordResponseTime(attributes, userId, appId, modelName);
@@ -90,6 +104,7 @@ public class AiModelMonitorListener implements ChatModelListener {
      */
     private void recordTokenUsage(ChatModelResponseContext responseContext, String userId, String appId, String modelName) {
         TokenUsage tokenUsage = responseContext.chatResponse().metadata().tokenUsage();
+        
         if (tokenUsage != null) {
             aiModelMetricsCollector.recordTokenUsage( modelName, "input", tokenUsage.inputTokenCount());
             aiModelMetricsCollector.recordTokenUsage( modelName, "output", tokenUsage.outputTokenCount());

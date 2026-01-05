@@ -13,9 +13,10 @@ import java.io.Serializable;
 @Builder
 @Data
 public class MonitorContext implements Serializable {
-    private String appId;
 
+    private String appId;
     private String userId;
+
 
     @Serial
     public static final long serialVersionUID = 1l;
