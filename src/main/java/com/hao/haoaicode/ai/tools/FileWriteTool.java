@@ -43,9 +43,12 @@ public class FileWriteTool extends BaseTool {
             String relativeFilePath,
             @P("要写入文件的内容")
             String content,
-            @ToolMemoryId Long appId
+            @ToolMemoryId String sessionId
     ) {
         try {
+            // 从 sessionId 中提取 appId（格式：userId:appId）
+            Long appId = extractAppIdFromSessionId(sessionId);
+            
             Path path = Paths.get(relativeFilePath);
             if (!path.isAbsolute()) {
                 // 相对路径处理，创建基于 appId 的项目目录
@@ -69,6 +72,29 @@ public class FileWriteTool extends BaseTool {
             String errorMessage = "文件写入失败: " + relativeFilePath + ", 错误: " + e.getMessage();
             log.error(errorMessage, e);
             return errorMessage;
+        }
+    }
+
+    /**
+     * 从 sessionId 中提取 appId
+     * @param sessionId 格式：userId:appId
+     * @return appId
+     */
+    private Long extractAppIdFromSessionId(String sessionId) {
+        if (sessionId == null || !sessionId.contains(":")) {
+            log.error("Invalid sessionId format: {}", sessionId);
+            throw new IllegalArgumentException("Invalid sessionId format, expected userId:appId");
+        }
+        String[] parts = sessionId.split(":");
+        if (parts.length != 2) {
+            log.error("Invalid sessionId format: {}", sessionId);
+            throw new IllegalArgumentException("Invalid sessionId format, expected userId:appId");
+        }
+        try {
+            return Long.parseLong(parts[1]);
+        } catch (NumberFormatException e) {
+            log.error("Failed to parse appId from sessionId: {}", sessionId, e);
+            throw new IllegalArgumentException("Invalid appId in sessionId: " + sessionId);
         }
     }
 }

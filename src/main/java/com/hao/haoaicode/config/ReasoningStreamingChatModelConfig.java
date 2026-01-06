@@ -10,6 +10,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Scope;
 
+import java.time.Duration;
 import java.util.List;
 
 @Configuration
@@ -31,10 +32,11 @@ public class ReasoningStreamingChatModelConfig {
     private Boolean logRequests = false;
 
     private Boolean logResponses = false;
+    
+    private Integer timeoutSeconds = 180; // 默认180秒超时，Tool调用需要更长时间
 
     @Bean
-    @Scope("prototype")
-    public StreamingChatModel reasoningStreamingChatModelPrototype() {
+    public StreamingChatModel reasoningStreamingChatModel() {
         return OpenAiStreamingChatModel.builder()
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
@@ -43,6 +45,7 @@ public class ReasoningStreamingChatModelConfig {
                 .temperature(temperature)
                 .logRequests(logRequests)
                 .logResponses(logResponses)
+                .timeout(Duration.ofSeconds(timeoutSeconds))
                 .listeners(List.of(aiModelMonitorListener))
                 .build();
     }

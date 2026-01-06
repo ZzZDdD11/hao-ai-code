@@ -1,35 +1,29 @@
 package com.hao.haoaicode.config;
 
-import cn.hutool.core.util.StrUtil;
-import dev.langchain4j.community.store.memory.chat.redis.RedisChatMemoryStore;
-import lombok.Data;
-import org.springframework.boot.context.properties.ConfigurationProperties;
+import dev.langchain4j.store.memory.chat.ChatMemoryStore;
+import jakarta.annotation.Resource;
+import org.redisson.api.RedissonClient;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.time.Duration;
+
+/**
+ * ChatMemoryStore 配置
+ * 使用自定义的 RedissonChatMemoryStore 替代 LangChain4j 的 RedisChatMemoryStore
+ */
 @Configuration
-@ConfigurationProperties(prefix = "spring.data.redis")
-@Data
 public class RedisChatMemoryStoreConfig {
 
-    private String host;
+    @Resource
+    private RedissonClient redissonClient;
 
-    private int port;
-
-    private String password;
-
-    private long ttl;
-
+    /**
+     * 创建基于 Redisson 的 ChatMemoryStore
+     * TTL 设置为 1 天，防止 Redis 内存无限增长
+     */
     @Bean
-    public RedisChatMemoryStore redisChatMemoryStore() {
-        RedisChatMemoryStore.Builder builder = RedisChatMemoryStore.builder()
-                .host(host)
-                .port(port)
-                .password(password)
-                .ttl(ttl);
-        if(StrUtil.isNotBlank(password)){
-             builder.user("default");
-         }
-        return builder.build();
+    public ChatMemoryStore chatMemoryStore() {
+        return new RedissonChatMemoryStore(redissonClient, Duration.ofDays(1));
     }
 }

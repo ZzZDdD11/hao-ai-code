@@ -11,23 +11,15 @@ spring:
     redis:
       host: localhost
       port: 6379
-      ttl: 3600
       database: 1
-      password: ''
-    jedis:
-      pool:
-        # 关键配置：开启借用前检查
-        test-on-borrow: true
-        # 关键配置：开启归还前检查
-        test-on-return: true
-        # 也可以开启空闲时检查
-        test-while-idle: true
-        # 每次检查的时间间隔 (毫秒)
-        time-between-eviction-runs: 30000
-        max-active: 8
-        max-wait: -1ms
-        max-idle: 8
-        min-idle: 0
+      timeout: 5000ms
+      ttl: 86400  # 聊天历史 TTL: 24小时（秒）
+      jedis:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 2
+          max-wait: 5000ms
   session:
     store-type: redis
     timeout: 2592000
@@ -49,24 +41,25 @@ knife4j:
 langchain4j:
   open-ai:
     streaming-chat-model:
-      base-url: https://open.bigmodel.cn/api/paas/v4
-      api-key: ${BIGMODEL_API_KEY}
-      model-name: glm-4.6
+      base-url: https://api.deepseek.com
+      api-key: ${DEEPSEEK_API_KEY}
+      model-name: deepseek-chat
       log-requests: true
       log-responses: true
       max-tokens: 8192
       strict-json-schema: true
       response-format: json_object
     reasoning-streaming-chat-model:
-      base-url: https://open.bigmodel.cn/api/paas/v4
-      api-key: ${BIGMODEL_API_KEY}
-      model-name: glm-4.6
+      base-url: https://api.deepseek.com
+      api-key: ${DEEPSEEK_API_KEY}
+      model-name: deepseek-chat
       log-requests: true
       log-responses: true
       max-tokens: 8192
       strict-json-schema: true
       temperature: 0.1
       response-format: json_object
+      timeout-seconds: 180  # Tool调用需要更长超时时间
     routing-chat-model:
       base-url: https://api.deepseek.com
       api-key: ${DEEPSEEK_API_KEY}
@@ -99,3 +92,6 @@ management:
   endpoint:
     health:
       show-details: always
+  health:
+    redis:
+      enabled: true  # 保持 Redis 健康检查开启

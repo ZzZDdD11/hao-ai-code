@@ -17,7 +17,6 @@ public class MonitorContext implements Serializable {
     private String appId;
     private String userId;
 
-
     @Serial
     public static final long serialVersionUID = 1l;
 

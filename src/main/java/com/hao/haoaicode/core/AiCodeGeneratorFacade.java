@@ -12,6 +12,7 @@ import com.hao.haoaicode.constant.AppConstant;
 import com.hao.haoaicode.core.builder.VueProjectBuilder;
 import com.hao.haoaicode.exception.BusinessException;
 import com.hao.haoaicode.exception.ErrorCode;
+import com.hao.haoaicode.model.entity.User;
 import com.hao.haoaicode.model.enums.CodeGenTypeEnum;
 import com.hao.haoaicode.parser.CodeParserExecutor;
 import com.hao.haoaicode.saver.CodeFileSaverExecutor;
@@ -27,6 +28,7 @@ import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
 import java.io.File;
+import java.util.Map;
 
 /**
  * AI 代码生成外观类，组合生成和保存功能
@@ -39,6 +41,19 @@ public class AiCodeGeneratorFacade {
     private AiCodeGeneratorServiceFactory aiCodeGeneratorServiceFactory;
     @Resource
     private VueProjectBuilder vueProjectBuilder;
+
+    /**
+     * 构建会话 ID
+     * 格式：userId:appId
+     *
+     * @param userId 用户ID
+     * @param appId  应用ID
+     * @return 会话ID
+     */
+    private String buildSessionId(Long userId, Long appId) {
+        return userId + ":" + appId;
+    }
+
     /**
      * 通用流式代码处理方法
      *
@@ -74,19 +89,24 @@ public class AiCodeGeneratorFacade {
      * @param codeGenTypeEnum 生成类型
      * @return 保存的目录
      */
-    public File generateAndSaveCode(String userMessage, CodeGenTypeEnum codeGenTypeEnum, Long appId) {
+    public File generateAndSaveCode(String userMessage, CodeGenTypeEnum codeGenTypeEnum, Long appId, User loginUser) {
         if (codeGenTypeEnum == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "生成类型为空");
         }
+        // 1. 构建 sessionId
+        String sessionId = buildSessionId(loginUser.getId(), appId);
+        
+        // 2. 获取共享服务（不再传 appId）
+        AiCodeGeneratorService service = aiCodeGeneratorServiceFactory.getService(codeGenTypeEnum);
+        
         return switch (codeGenTypeEnum) {
             case HTML -> {
-                AiCodeGeneratorService aiCodeGeneratorService = aiCodeGeneratorServiceFactory.getAiCodeGeneratorService(appId);
-                HtmlCodeResult result = aiCodeGeneratorService.generateHtmlCode(userMessage);
+                // 3. 调用时传入 sessionId
+                HtmlCodeResult result = service.generateHtmlCode(sessionId, userMessage);
                 yield CodeFileSaverExecutor.executeSaver(result, CodeGenTypeEnum.HTML, appId);
             }
             case MULTI_FILE -> {
-                AiCodeGeneratorService aiCodeGeneratorService = aiCodeGeneratorServiceFactory.getAiCodeGeneratorService(appId);
-                MultiFileCodeResult result = aiCodeGeneratorService.generateMultiFileCode(userMessage);
+                MultiFileCodeResult result = service.generateMultiFileCode(sessionId, userMessage);
                 yield CodeFileSaverExecutor.executeSaver(result, CodeGenTypeEnum.MULTI_FILE, appId);
             }
             default -> {
@@ -102,23 +122,35 @@ public class AiCodeGeneratorFacade {
      * @param userMessage     用户提示词
      * @param codeGenTypeEnum 生成类型
      */
-    public Flux<String> generateAndSaveCodeStream(String userMessage, CodeGenTypeEnum codeGenTypeEnum, Long appId) {
+    public Flux<String> generateAndSaveCodeStream(String userMessage, CodeGenTypeEnum codeGenTypeEnum, Long appId, User loginUser) {
         if (codeGenTypeEnum == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "生成类型为空");
         }
-        // 根据 appId 获取对应的 AI 服务实例
-        AiCodeGeneratorService aiCodeGeneratorService = aiCodeGeneratorServiceFactory.getAiCodeGeneratorService(appId, codeGenTypeEnum);
-        return switch (codeGenTypeEnum) {
+        
+        // 立即返回初始消息，防止客户端超时
+        String startMessage = JSONUtil.toJsonStr(Map.of(
+            "type", "START",
+            "message", "开始生成代码...",
+            "timestamp", System.currentTimeMillis()
+        ));
+        
+        // 1. 构建 sessionId
+        String sessionId = buildSessionId(loginUser.getId(), appId);
+        
+        // 2. 获取共享服务（不再传 appId 和 codeGenType）
+        AiCodeGeneratorService service = aiCodeGeneratorServiceFactory.getService(codeGenTypeEnum);
+        
+        Flux<String> actualStream = switch (codeGenTypeEnum) {
             case HTML -> {
-                Flux<String> codeStream = aiCodeGeneratorService.generateHtmlCodeStream(userMessage);
+                Flux<String> codeStream = service.generateHtmlCodeStream(sessionId, userMessage);
                 yield processCodeStream(codeStream, CodeGenTypeEnum.HTML, appId);
             }
             case MULTI_FILE -> {
-                Flux<String> codeStream = aiCodeGeneratorService.generateMultiFileCodeStream(userMessage);
+                Flux<String> codeStream = service.generateMultiFileCodeStream(sessionId, userMessage);
                 yield processCodeStream(codeStream, CodeGenTypeEnum.MULTI_FILE, appId);
             }
             case VUE_PROJECT -> {
-                TokenStream tokenStream = aiCodeGeneratorService.generateVueProjectCodeStream(appId, userMessage);
+                TokenStream tokenStream = service.generateVueProjectCodeStream(sessionId, userMessage);
                 yield processTokenStream(tokenStream, String.valueOf(appId));
             }
             default -> {
@@ -126,6 +158,12 @@ public class AiCodeGeneratorFacade {
                 throw new BusinessException(ErrorCode.SYSTEM_ERROR, errorMessage);
             }
         };
+        
+        // 使用 Flux.concat 先返回初始消息，再返回实际数据流
+        return Flux.concat(
+            Flux.just(startMessage),
+            actualStream
+        );
     }
 
 
