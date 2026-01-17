@@ -175,20 +175,36 @@ public class AiCodeGeneratorFacade {
      */
     private Flux<String> processTokenStream(TokenStream tokenStream, String appId) {
         return Flux.create(sink -> {
+            // ✅ 注册取消回调 - 当前端断开连接时触发
+            sink.onCancel(() -> {
+                log.info("客户端取消订阅，appId: {}", appId);
+                // 这里可以做一些清理工作，比如记录监控指标
+            });
+            
             tokenStream.onPartialResponse((String partialResponse) -> {
+                        // ✅ 可选：检查是否已取消，避免无效推送
+                        if (sink.isCancelled()) {
+                            return;
+                        }
                         AiResponseMessage aiResponseMessage = new AiResponseMessage(partialResponse);
                         sink.next(JSONUtil.toJsonStr(aiResponseMessage));
                     })
                     .onPartialToolExecutionRequest((index, toolExecutionRequest) -> {
+                        if (sink.isCancelled()) return;
                         ToolRequestMessage toolRequestMessage = new ToolRequestMessage(toolExecutionRequest);
                         sink.next(JSONUtil.toJsonStr(toolRequestMessage));
                     })
                     .onToolExecuted((ToolExecution toolExecution) -> {
+                        if (sink.isCancelled()) return;
                         ToolExecutedMessage toolExecutedMessage = new ToolExecutedMessage(toolExecution);
                         sink.next(JSONUtil.toJsonStr(toolExecutedMessage));
                     })
                     .onCompleteResponse((ChatResponse response) -> {
-                        // 执行 Vue 项目构建（同步执行，确保预览时项目已就绪）
+                        // ✅ 如果已取消，跳过构建
+                        if (sink.isCancelled()) {
+                            log.info("已取消，跳过 Vue 项目构建");
+                            return;
+                        }
                         String projectPath = AppConstant.CODE_OUTPUT_ROOT_DIR + File.separator + "vue_project_" + appId;
                         vueProjectBuilder.buildProject(projectPath);
                         sink.complete();

@@ -33,8 +33,7 @@ public class StreamingChatModelConfig {
     private boolean logResponses;
 
     @Bean
-    @Scope("prototype")
-    public StreamingChatModel streamingChatModelPrototype() {
+    public StreamingChatModel streamingChatModel() {
         return OpenAiStreamingChatModel.builder()
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)

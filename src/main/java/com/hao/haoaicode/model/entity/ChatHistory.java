@@ -76,4 +76,16 @@ public class ChatHistory implements Serializable {
     @Column(value = "isDelete", isLogicDelete = true)
     private Integer isDelete;
 
+    /**
+     * 存储类型: DIRECT/COS
+     */
+    @Column("storageType")
+    private String storageType;
+
+    /**
+     * COS对象引用key（仅COS类型有值）
+     */
+    @Column("contentRef")
+    private String contentRef;
+
 }

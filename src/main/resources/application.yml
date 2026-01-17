@@ -94,4 +94,16 @@ management:
       show-details: always
   health:
     redis:
-      enabled: true  # 保持 Redis 健康检查开启
+      enabled: false  # 保持 Redis 健康检查开启
+
+# RAG 服务配置
+rag:
+  enabled: true
+  mock: false  # 使用真实 Python 服务
+  service:
+    url: http://localhost:8000  # Python 服务端口
+    timeout: 120000  # 超时时间 120 秒（2 分钟）
+  features:
+    vector: true
+    graph: true
+    web: false

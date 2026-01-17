@@ -57,4 +57,58 @@ public class CosManager {
             return null;
         }
     }
+
+
+    /**
+     * 上传字符串内容到 COS
+     * 用于大消息分层存储
+     *
+     * @param key     COS对象键（完整路径）
+     * @param content 要上传的字符串内容
+     * @return 上传成功返回 key，失败返回 null
+     */
+    public String uploadContent(String key, String content) {
+        try {
+            byte[] bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            com.qcloud.cos.model.ObjectMetadata metadata = new com.qcloud.cos.model.ObjectMetadata();
+            metadata.setContentLength(bytes.length);
+            metadata.setContentType("application/json; charset=utf-8");
+
+            PutObjectRequest request = new PutObjectRequest(
+                    cosClientConfig.getBucket(),
+                    key,
+                    new java.io.ByteArrayInputStream(bytes),
+                    metadata
+            );
+            cosClient.putObject(request);
+
+            log.info("内容上传COS成功: {}, 大小: {} bytes", key, bytes.length);
+            return key;
+        } catch (Exception e) {
+            log.error("内容上传COS失败: {}", e.getMessage(), e);
+            return null;
+        }
+    }
+
+    /**
+     * 从 COS 下载字符串内容
+     * 用于记忆恢复时加载大消息
+     *
+     * @param key COS对象键（完整路径）
+     * @return 下载的字符串内容，失败返回 null
+     */
+    public String downloadContent(String key) {
+        try {
+            com.qcloud.cos.model.COSObject cosObject = cosClient.getObject(cosClientConfig.getBucket(), key);
+            try (java.io.InputStream inputStream = cosObject.getObjectContent()) {
+                String content = new String(inputStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                log.info("内容下载COS成功: {}, 大小: {} bytes", key, content.length());
+                return content;
+            }
+        } catch (Exception e) {
+            log.error("内容下载COS失败: {}, 错误: {}", key, e.getMessage(), e);
+            return null;
+        }
+    }
+
 }

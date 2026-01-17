@@ -46,7 +46,7 @@ public class AiCodeGeneratorServiceFactory {
     public AiCodeGeneratorService htmlAiService() {
         return AiServices.builder(AiCodeGeneratorService.class)
             .chatModel(chatModel)
-            .streamingChatModel(openAiStreamingChatModel)
+            .streamingChatModel(reasoningStreamingChatModel)
             .chatMemoryProvider(memoryId -> {
                 return MessageWindowChatMemory.builder()
                     .id(memoryId)

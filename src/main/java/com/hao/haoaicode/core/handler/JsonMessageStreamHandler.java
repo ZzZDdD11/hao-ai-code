@@ -5,6 +5,7 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import com.hao.haoaicode.ai.model.message.*;
+import com.hao.haoaicode.buffer.ChatMessageRouter;
 import com.hao.haoaicode.constant.AppConstant;
 import com.hao.haoaicode.core.builder.VueProjectBuilder;
 import com.hao.haoaicode.model.entity.User;
@@ -25,6 +26,10 @@ import java.util.Set;
 @Slf4j
 @Component
 public class JsonMessageStreamHandler {
+
+    @Resource
+    private ChatMessageRouter chatMessageRouter;
+
     @Resource
     private VueProjectBuilder vueProjectBuilder;
     // 用于累积不完整的 JSON 块
@@ -35,13 +40,11 @@ public class JsonMessageStreamHandler {
      * 解析 JSON 消息并重组为完整的响应格式
      *
      * @param originFlux         原始流
-     * @param chatHistoryService 聊天历史服务
      * @param appId              应用ID
      * @param loginUser          登录用户
      * @return 处理后的流
      */
     public Flux<String> handle(Flux<String> originFlux,
-                               ChatHistoryService chatHistoryService,
                                long appId, User loginUser) {
         // 收集数据用于生成后端记忆格式
         StringBuilder chatHistoryStringBuilder = new StringBuilder();
@@ -56,13 +59,13 @@ public class JsonMessageStreamHandler {
                 .doOnComplete(() -> {
                     // 流式响应完成后，添加 AI 消息到对话历史
                     String aiResponse = chatHistoryStringBuilder.toString();
-                    chatHistoryService.addChatMessage(appId, aiResponse, ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
+                    chatMessageRouter.route(appId, aiResponse, ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
                 })
                 .doOnError(error -> {
-                    // 如果AI回复失败，也要记录错误消息
                     String errorMessage = "AI回复失败: " + error.getMessage();
-                    chatHistoryService.addChatMessage(appId, errorMessage, ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
+                    chatMessageRouter.route(appId, errorMessage, ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
                 });
+
     }
 
     /**

@@ -5,8 +5,10 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hao.haoaicode.ai.AiCodeGenTypeRoutingService;
 import com.hao.haoaicode.ai.AiCodeGenTypeRoutingServiceFactory;
+import com.hao.haoaicode.buffer.ChatMessageRouter;
 import com.hao.haoaicode.constant.AppConstant;
 import com.hao.haoaicode.core.AiCodeGeneratorFacade;
 import com.hao.haoaicode.core.builder.VueProjectBuilder;
@@ -25,6 +27,10 @@ import com.hao.haoaicode.model.vo.AppVO;
 import com.hao.haoaicode.model.vo.UserVO;
 import com.hao.haoaicode.monitor.MonitorContext;
 import com.hao.haoaicode.monitor.MonitorContextHolder;
+import com.hao.haoaicode.ratelimit.RateLimitType;
+import com.hao.haoaicode.ratelimit.annotation.RateLimit;
+import com.hao.haoaicode.review.RagEnhancementService;
+import com.hao.haoaicode.review.model.CodeAuditResponse;
 import com.hao.haoaicode.service.AppService;
 import com.hao.haoaicode.service.ChatHistoryService;
 import com.hao.haoaicode.service.ScreenshotService;
@@ -36,6 +42,7 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
@@ -46,6 +53,8 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 
@@ -75,6 +84,12 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     private AiCodeGenTypeRoutingService aiCodeGenTypeRoutingService;
     @Resource
     private AiCodeGenTypeRoutingServiceFactory aiCodeGenTypeRoutingServiceFactory;
+    @Resource
+    private ChatMessageRouter chatMessageRouter;
+    @Resource
+    private RagEnhancementService ragEnhancementService;
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;  // 如果还没有
 
 
     /**
@@ -230,6 +245,8 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
      * @return
      */
     @Override
+    @RateLimit(key = "chat", rate = 5, rateInterval = 60, limitType = RateLimitType.USER,
+            message = "每分钟最多发送5条消息")
     public Flux<String> chatToGenCode(Long appId, String message, User loginUser) {
         // 1. 参数校验
         ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用 ID 不能为空");
@@ -248,7 +265,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "不支持的代码生成类型");
         }
         // 5. 将用户消息存储到对话历史
-        chatHistoryService.addChatMessage(appId, message, ChatHistoryMessageTypeEnum.USER.getValue(), loginUser.getId());
+        chatMessageRouter.route(appId, message, ChatHistoryMessageTypeEnum.USER.getValue(), loginUser.getId());
         // 6. 设置监控上下文
         MonitorContextHolder.setContext(MonitorContext.builder()
                 .userId(loginUser.getId().toString())
@@ -257,9 +274,58 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         // 7. 调用模型生成代码
         Flux<String> codeStream = aiCodeGeneratorFacade.generateAndSaveCodeStream(message, codeGenTypeEnum, appId, loginUser);
         // 8. 收集生成的代码，存储到对话历史
-        return streamHandlerExecutor.doExecute(codeStream, chatHistoryService, appId, loginUser, codeGenTypeEnum)
+        return streamHandlerExecutor.doExecute(codeStream, appId, loginUser, codeGenTypeEnum)
                 .doFinally(signalType -> {
                     MonitorContextHolder.clearContext();
+                    log.info("代码生成完成，appId: {}, 触发代码审计", appId);
+                    
+                    // 异步触发代码审计
+                    CompletableFuture.runAsync(() -> {
+                        try {
+                            // 等待一小段时间，确保文件已保存
+                            Thread.sleep(500);
+                            
+                            // 1. 获取生成的代码
+                            String generatedCode = getGeneratedCodeFromFile(appId, codeGenTypeEnum);
+                            
+                            if (StrUtil.isNotBlank(generatedCode)) {
+                                // 2. 调用代码审计
+                                log.info("开始审计代码，appId: {}, 代码长度: {}", appId, generatedCode.length());
+                                CodeAuditResponse auditResult = ragEnhancementService.auditCode(
+                                    generatedCode, 
+                                    getLanguageFromCodeType(codeGenTypeEnum)
+                                );
+                                
+                                // 3. 处理审计结果
+                                if (auditResult != null && auditResult.getAuditResult() != null) {
+                                    String riskLevel = auditResult.getAuditResult().getRiskLevel();
+                                    Integer score = auditResult.getAuditResult().getSecurityScore();
+                                    log.info("代码审计完成，appId: {}, 风险等级: {}, 安全评分: {}", 
+                                        appId, riskLevel, score);
+                                    
+                                    // 4. 保存审计结果到 Redis
+                                    saveAuditResult(appId, auditResult);
+                                    
+                                    // 5. 高危代码告警
+                                    if ("HIGH".equals(riskLevel)) {
+                                        log.warn("⚠️ 检测到高危代码！appId: {}, 漏洞数: {}", 
+                                            appId, 
+                                            auditResult.getAuditResult().getVulnerabilities() != null ? 
+                                                auditResult.getAuditResult().getVulnerabilities().size() : 0);
+                                    }
+                                } else {
+                                    log.warn("审计结果为空，appId: {}", appId);
+                                }
+                            } else {
+                                log.warn("未找到生成的代码，appId: {}", appId);
+                            }
+                            
+                        } catch (Exception e) {
+                            log.error("代码审计失败，appId: {}, error: {}", appId, e.getMessage());
+                            // 审计失败不影响主流程
+                        }
+                    });
+
                 });
 
     }
@@ -332,5 +398,129 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         log.info("应用创建成功，ID: {}, 类型: {}", app.getId(), selectedCodeGenType.getValue());
         return app.getId();
     }
+
+        /**
+    /**
+     * 从文件系统获取生成的代码
+     * 
+     * @param appId 应用ID
+     * @param codeGenTypeEnum 代码生成类型
+     * @return 生成的代码
+     */
+    private String getGeneratedCodeFromFile(Long appId, CodeGenTypeEnum codeGenTypeEnum) {
+        try {
+            // 根据代码类型构建文件路径
+            String dirName = codeGenTypeEnum.getValue() + "_" + appId;
+            String dirPath = AppConstant.CODE_OUTPUT_ROOT_DIR + File.separator + dirName;
+            
+            File dir = new File(dirPath);
+            if (!dir.exists() || !dir.isDirectory()) {
+                log.warn("代码目录不存在: {}", dirPath);
+                return null;
+            }
+            
+            // 读取主文件内容
+            String mainFileName = getMainFileName(codeGenTypeEnum);
+            File mainFile = new File(dir, mainFileName);
+            
+            if (mainFile.exists() && mainFile.isFile()) {
+                String code = FileUtil.readUtf8String(mainFile);
+                log.info("读取到代码文件: {}, 长度: {}", mainFile.getAbsolutePath(), code.length());
+                return code;
+            } else {
+                log.warn("主文件不存在: {}", mainFile.getAbsolutePath());
+                return null;
+            }
+            
+        } catch (Exception e) {
+            log.error("读取代码文件失败: {}", e.getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * 根据代码类型获取主文件名
+     * 
+     * @param codeGenTypeEnum 代码生成类型
+     * @return 主文件名
+     */
+    private String getMainFileName(CodeGenTypeEnum codeGenTypeEnum) {
+        return switch (codeGenTypeEnum) {
+            case HTML -> "index.html";
+            case MULTI_FILE -> "App.java";
+            case VUE_PROJECT -> "src/App.vue";
+            default -> "index.html";
+        };
+    }
+    
+    /**
+     * 根据代码类型获取编程语言
+     * 
+     * @param codeGenTypeEnum 代码生成类型
+     * @return 编程语言
+     */
+    private String getLanguageFromCodeType(CodeGenTypeEnum codeGenTypeEnum) {
+        return switch (codeGenTypeEnum) {
+            case HTML -> "html";
+            case MULTI_FILE -> "java";
+            case VUE_PROJECT -> "javascript";
+            default -> "java";
+        };
+    }
+    
+    /**
+     * 从 Redis 缓存中获取生成的代码（已废弃，改用文件系统）
+     * 
+     * @param appId 应用ID
+     * @return 生成的代码
+     */
+    @Deprecated
+    private String getGeneratedCode(Long appId) {
+        try {
+            // 假设代码存储在 Redis 中，key 格式为 "generated_code:{appId}"
+            String key = "generated_code:" + appId;
+            
+            // 使用 StringRedisTemplate 或 RedisTemplate 读取
+            // 这里需要注入 RedisTemplate
+            String code = stringRedisTemplate.opsForValue().get(key);
+            
+            if (StrUtil.isNotBlank(code)) {
+                log.info("从 Redis 读取到代码，appId: {}, 长度: {}", appId, code.length());
+                return code;
+            }
+            
+            log.warn("Redis 中未找到代码，appId: {}", appId);
+            return null;
+            
+        } catch (Exception e) {
+            log.error("从 Redis 读取代码失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 将审计结果保存到 Redis
+     * 
+     * @param appId 应用ID
+     * @param auditResult 审计结果
+     */
+    private void saveAuditResult(Long appId, CodeAuditResponse auditResult) {
+        try {
+            String key = "audit_result:" + appId;
+            
+            // 使用 Jackson 序列化为 JSON
+            ObjectMapper mapper = new ObjectMapper();
+            String json = mapper.writeValueAsString(auditResult);
+            
+            // 保存到 Redis，设置过期时间（1 小时）
+            stringRedisTemplate.opsForValue().set(key, json, 1, TimeUnit.HOURS);
+            
+            log.info("审计结果已保存到 Redis，appId: {}, key: {}", appId, key);
+            
+        } catch (Exception e) {
+            log.error("保存审计结果失败: {}", e.getMessage());
+        }
+    }
+
 
 }
