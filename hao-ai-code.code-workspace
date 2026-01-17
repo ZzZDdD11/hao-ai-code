@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../../Downloads/yu-ai-code-mother-master/yu-ai-code-mother-frontend"
+		},
+		{
+			"path": "../MaM-RAG"
+		}
+	],
+	"settings": {
+		"java.compile.nullAnalysis.mode": "automatic",
+		"kiroAgent.configureMCP": "Disabled"
+	}
+}
