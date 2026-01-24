@@ -13,9 +13,12 @@ import com.hao.haoaicode.core.builder.VueProjectBuilder;
 import com.hao.haoaicode.exception.BusinessException;
 import com.hao.haoaicode.exception.ErrorCode;
 import com.hao.haoaicode.model.entity.User;
+import com.hao.haoaicode.model.enums.CodeGenCostEnum;
 import com.hao.haoaicode.model.enums.CodeGenTypeEnum;
 import com.hao.haoaicode.parser.CodeParserExecutor;
 import com.hao.haoaicode.saver.CodeFileSaverExecutor;
+import com.hao.haoaicode.service.UserWalletService;
+
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.service.TokenStream;
 import dev.langchain4j.service.tool.ToolExecution;
@@ -41,6 +44,8 @@ public class AiCodeGeneratorFacade {
     private AiCodeGeneratorServiceFactory aiCodeGeneratorServiceFactory;
     @Resource
     private VueProjectBuilder vueProjectBuilder;
+    @Resource
+    private UserWalletService userWalletService;
 
     /**
      * 构建会话 ID
@@ -93,27 +98,59 @@ public class AiCodeGeneratorFacade {
         if (codeGenTypeEnum == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "生成类型为空");
         }
-        // 1. 构建 sessionId
-        String sessionId = buildSessionId(loginUser.getId(), appId);
+
+
+        // ========== 新增：扣费逻辑 ==========
+        // 1. 计算消耗积分
+        int cost = CodeGenCostEnum.getCost(codeGenTypeEnum);
         
-        // 2. 获取共享服务（不再传 appId）
-        AiCodeGeneratorService service = aiCodeGeneratorServiceFactory.getService(codeGenTypeEnum);
+        // 2. 预扣费
+        boolean deductSuccess = userWalletService.tryDeduct(loginUser.getId(), cost);
+        if (!deductSuccess) {
+            log.warn("积分不足, userId: {}, 需要: {}", loginUser.getId(), cost);
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, 
+                "积分不足，当前操作需要 " + cost + " 积分，请先充值");
+        }
         
-        return switch (codeGenTypeEnum) {
-            case HTML -> {
-                // 3. 调用时传入 sessionId
-                HtmlCodeResult result = service.generateHtmlCode(sessionId, userMessage);
-                yield CodeFileSaverExecutor.executeSaver(result, CodeGenTypeEnum.HTML, appId);
-            }
-            case MULTI_FILE -> {
-                MultiFileCodeResult result = service.generateMultiFileCode(sessionId, userMessage);
-                yield CodeFileSaverExecutor.executeSaver(result, CodeGenTypeEnum.MULTI_FILE, appId);
-            }
-            default -> {
-                String errorMessage = "不支持的生成类型：" + codeGenTypeEnum.getValue();
-                throw new BusinessException(ErrorCode.SYSTEM_ERROR, errorMessage);
-            }
-        };
+        log.info("预扣费成功, userId: {}, cost: {}, type: {}", 
+            loginUser.getId(), cost, codeGenTypeEnum.getValue());
+        // ====================================
+        
+        try {
+            // 3. 构建 sessionId
+            String sessionId = buildSessionId(loginUser.getId(), appId);
+            
+            // 4. 获取服务并生成代码
+            AiCodeGeneratorService service = aiCodeGeneratorServiceFactory.getService(codeGenTypeEnum);
+            
+            File result = switch (codeGenTypeEnum) {
+                case HTML -> {
+                    HtmlCodeResult htmlResult = service.generateHtmlCode(sessionId, userMessage);
+                    yield CodeFileSaverExecutor.executeSaver(htmlResult, CodeGenTypeEnum.HTML, appId);
+                }
+                case MULTI_FILE -> {
+                    MultiFileCodeResult multiResult = service.generateMultiFileCode(sessionId, userMessage);
+                    yield CodeFileSaverExecutor.executeSaver(multiResult, CodeGenTypeEnum.MULTI_FILE, appId);
+                }
+                default -> {
+                    String errorMessage = "不支持的生成类型：" + codeGenTypeEnum.getValue();
+                    throw new BusinessException(ErrorCode.SYSTEM_ERROR, errorMessage);
+                }
+            };
+            
+            // 5. 生成成功，记录日志（积分已在Redis扣除，异步落盘到MySQL）
+            log.info("代码生成成功, userId: {}, appId: {}, cost: {}, type: {}", 
+                loginUser.getId(), appId, cost, codeGenTypeEnum.getValue());
+            
+            return result;
+            
+        } catch (Exception e) {
+            // 6. 生成失败，回滚积分
+            log.error("代码生成失败，回滚积分, userId: {}, cost: {}", loginUser.getId(), cost, e);
+            userWalletService.rollback(loginUser.getId(), cost);
+            throw e;
+        }
+
     }
 
     /**
@@ -126,6 +163,22 @@ public class AiCodeGeneratorFacade {
         if (codeGenTypeEnum == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "生成类型为空");
         }
+                // ========== 新增：扣费逻辑 ==========
+        // 1. 计算消耗积分
+        int cost = CodeGenCostEnum.getCost(codeGenTypeEnum);
+        
+        // 2. 预扣费
+        boolean deductSuccess = userWalletService.tryDeduct(loginUser.getId(), cost);
+        if (!deductSuccess) {
+            log.warn("积分不足, userId: {}, 需要: {}", loginUser.getId(), cost);
+            return Flux.error(new BusinessException(ErrorCode.OPERATION_ERROR, 
+                "积分不足，当前操作需要 " + cost + " 积分，请先充值"));
+        }
+        
+        log.info("预扣费成功（流式）, userId: {}, cost: {}, type: {}", 
+            loginUser.getId(), cost, codeGenTypeEnum.getValue());
+        // ====================================
+        
         
         // 立即返回初始消息，防止客户端超时
         String startMessage = JSONUtil.toJsonStr(Map.of(
@@ -139,7 +192,7 @@ public class AiCodeGeneratorFacade {
         
         // 2. 获取共享服务（不再传 appId 和 codeGenType）
         AiCodeGeneratorService service = aiCodeGeneratorServiceFactory.getService(codeGenTypeEnum);
-        
+        // 构建代码流
         Flux<String> actualStream = switch (codeGenTypeEnum) {
             case HTML -> {
                 Flux<String> codeStream = service.generateHtmlCodeStream(sessionId, userMessage);
@@ -158,8 +211,28 @@ public class AiCodeGeneratorFacade {
                 throw new BusinessException(ErrorCode.SYSTEM_ERROR, errorMessage);
             }
         };
+
+        // 7. 添加回滚逻辑
+        Flux<String> streamWithRollback = actualStream
+            .doOnComplete(() -> {
+                // 生成成功
+                log.info("流式代码生成成功, userId: {}, appId: {}, cost: {}", 
+                    loginUser.getId(), appId, cost);
+            })
+            .doOnError(error -> {
+                // 生成失败，回滚积分
+                log.error("流式代码生成失败，回滚积分, userId: {}, cost: {}", 
+                    loginUser.getId(), cost, error);
+                userWalletService.rollback(loginUser.getId(), cost);
+            })
+            .doOnCancel(() -> {
+                // 用户取消，回滚积分
+                log.warn("用户取消生成，回滚积分, userId: {}, cost: {}", 
+                    loginUser.getId(), cost);
+                userWalletService.rollback(loginUser.getId(), cost);
+            });
         
-        // 使用 Flux.concat 先返回初始消息，再返回实际数据流
+        // 使用 Flux.concat 先返回初始消息，再返回完整实际数据流
         return Flux.concat(
             Flux.just(startMessage),
             actualStream
