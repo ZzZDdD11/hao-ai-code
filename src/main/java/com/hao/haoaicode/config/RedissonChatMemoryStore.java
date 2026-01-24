@@ -50,6 +50,9 @@ public class RedissonChatMemoryStore implements ChatMemoryStore {
         this.cosManager = cosManager;
     }
 
+    /**
+     * 读取消息
+     */
     @Override
     public List<ChatMessage> getMessages(Object memoryId) {
         String key = buildKey(memoryId);
@@ -79,7 +82,49 @@ public class RedissonChatMemoryStore implements ChatMemoryStore {
         }
     }
 
+
     /**
+     * 更新记忆
+     */
+    @Override
+    public void updateMessages(Object memoryId, List<ChatMessage> messages) {
+        
+        String key = buildKey(memoryId);
+        try {
+            RBucket<String> bucket = redissonClient.getBucket(key);
+            if (messages == null || messages.isEmpty()) {
+                bucket.delete();
+                return;
+            }
+            String json = ChatMessageSerializer.messagesToJson(messages);
+            bucket.set(json, ttl);
+            log.debug("Updated messages in Redis, memoryId: {}, count: {}", memoryId, messages.size());
+        } catch (Exception e) {
+            log.error("Failed to update messages in Redis, memoryId: {}", memoryId, e);
+        }
+    }
+
+    /**
+     * 删除记忆
+     */
+    @Override
+    public void deleteMessages(Object memoryId) {
+        String key = buildKey(memoryId);
+        try {
+            RBucket<String> bucket = redissonClient.getBucket(key);
+            bucket.delete();
+            log.debug("Deleted messages from Redis, memoryId: {}", memoryId);
+        } catch (Exception e) {
+            log.error("Failed to delete messages from Redis, memoryId: {}", memoryId, e);
+        }
+    }
+
+    private String buildKey(Object memoryId) {
+        return KEY_PREFIX + memoryId.toString();
+    }
+
+
+        /**
      * 从 MySQL 加载历史记录并转换为 LangChain4j 格式
      */
     private List<ChatMessage> loadFromMySQL(Object memoryId) {
@@ -164,36 +209,4 @@ public class RedissonChatMemoryStore implements ChatMemoryStore {
         }
     }
 
-    @Override
-    public void updateMessages(Object memoryId, List<ChatMessage> messages) {
-        String key = buildKey(memoryId);
-        try {
-            RBucket<String> bucket = redissonClient.getBucket(key);
-            if (messages == null || messages.isEmpty()) {
-                bucket.delete();
-                return;
-            }
-            String json = ChatMessageSerializer.messagesToJson(messages);
-            bucket.set(json, ttl);
-            log.debug("Updated messages in Redis, memoryId: {}, count: {}", memoryId, messages.size());
-        } catch (Exception e) {
-            log.error("Failed to update messages in Redis, memoryId: {}", memoryId, e);
-        }
-    }
-
-    @Override
-    public void deleteMessages(Object memoryId) {
-        String key = buildKey(memoryId);
-        try {
-            RBucket<String> bucket = redissonClient.getBucket(key);
-            bucket.delete();
-            log.debug("Deleted messages from Redis, memoryId: {}", memoryId);
-        } catch (Exception e) {
-            log.error("Failed to delete messages from Redis, memoryId: {}", memoryId, e);
-        }
-    }
-
-    private String buildKey(Object memoryId) {
-        return KEY_PREFIX + memoryId.toString();
-    }
 }

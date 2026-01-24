@@ -13,7 +13,7 @@ public interface AiCodeGeneratorService {
 
     /**
      * 生成html文件
-     * @param sessionId 会话ID（格式：userId:appId）
+     * @param sessionId 会话ID（格式：userId:appId），作为内存存历史的key
      * @param userMessage 用户消息
      * @return HTML代码结果
      */

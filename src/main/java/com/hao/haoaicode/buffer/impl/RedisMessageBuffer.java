@@ -18,7 +18,7 @@ import java.util.List;
  * 使用 Redis List 作为缓冲队列
  * LPUSH 入队，RPOP 出队（FIFO）
  * 
- * @Primary 标记为默认实现，未来可通过配置切换到 MQ 实现
+ * @Primary 
  */
 @Slf4j
 @Component

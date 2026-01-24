@@ -39,6 +39,7 @@ public class AuthInterceptor {
         UserRoleEnum mustRoleEnum = UserRoleEnum.getEnumByValue(mustRole);
         // 不需要权限，放行
         if (mustRoleEnum == null) {
+            // 执行原方法
             return joinPoint.proceed();
         }
         // 以下为：必须有该权限才通过

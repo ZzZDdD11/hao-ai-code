@@ -50,3 +50,21 @@ create table chat_history
     INDEX idx_createTime (createTime),             -- 提升基于时间的查询性能
     INDEX idx_appId_createTime (appId, createTime) -- 游标查询核心索引
 ) comment '对话历史' collate = utf8mb4_unicode_ci;
+
+-- 用户钱包表：核心资产数据
+CREATE TABLE IF NOT EXISTS user_wallet
+(
+    id            bigint auto_increment comment 'id' primary key,
+    userId        bigint                             not null comment '用户id',
+    balance       bigint   default 0                 not null comment '当前积分余额',
+    totalConsumed bigint   default 0                 not null comment '总消耗积分',
+    version       int      default 1                 not null comment '乐观锁版本号',
+    createTime    datetime default CURRENT_TIMESTAMP not null comment '创建时间',
+    updateTime    datetime default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP comment '更新时间',
+    isDelete      tinyint  default 0                 not null comment '是否删除',
+    UNIQUE KEY uk_userId (userId)
+) comment '用户钱包表' collate = utf8mb4_unicode_ci;
+
+-- 初始化测试数据：给你的测试账号（userId=1）充值 100 分
+INSERT INTO user_wallet (userId, balance) VALUES (1, 100) 
+ON DUPLICATE KEY UPDATE balance = balance;

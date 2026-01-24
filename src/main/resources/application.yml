@@ -3,9 +3,9 @@ spring:
   name: hao-ai-code
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/hao-ai-code
+    url: jdbc:mysql://localhost:3306/hao_ai_code
     username: root
-    password: 12345678
+    password: 123456
   # redis
   data:
     redis:
