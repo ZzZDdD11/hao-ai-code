@@ -19,7 +19,7 @@ import org.springframework.web.client.RestTemplate;
 @Service
 public class RagEnhancementService {
     
-    @Value("${rag.service.url:http://localhost:8000}")
+    @Value("${rag.service.url:http://localhost:8001}")
     private String ragServiceUrl;
     
     @Value("${rag.enabled:true}")
@@ -155,29 +155,29 @@ public class RagEnhancementService {
     }
     
     /**
-     * 调用 Python RAG 服务进行代码审计
+     * 调用 Python RAG 服务进行代码质量检查（新版本）
      * 
-     * @param code 待审计的代码
+     * @param code 待检查的代码
      * @param language 代码语言
-     * @return 审计结果
+     * @return 代码质量检查结果
      */
-    public CodeAuditResponse auditCode(String code, String language) {
+    public CodeAuditResponse checkCodeQuality(String code, String language) {
         // 1. 检查是否启用
         if (!ragEnabled) {
             log.info("RAG 功能未启用");
-            return createErrorAuditResponse("RAG 功能未启用");
+            return createErrorQualityResponse("RAG 功能未启用");
         }
         
         // 2. 参数校验
         if (StrUtil.isBlank(code)) {
-            log.warn("待审计代码为空");
-            return createErrorAuditResponse("待审计代码为空");
+            log.warn("待检查代码为空");
+            return createErrorQualityResponse("待检查代码为空");
         }
         
-        // 3. Mock 模式：返回模拟审计结果
+        // 3. Mock 模式：返回模拟检查结果
         if (ragMock) {
-            log.info("RAG Mock 模式，返回模拟审计结果");
-            return createMockAuditResponse();
+            log.info("RAG Mock 模式，返回模拟质量检查结果");
+            return createMockQualityResponse();
         }
         
         try {
@@ -185,29 +185,38 @@ public class RagEnhancementService {
             CodeAuditRequest request = CodeAuditRequest.builder()
                 .code(code)
                 .language(language)
-                .enableGraph(true)
+                .enableGraph(false)  // 质量检查不需要图谱
                 .build();
             
             // 5. 调用 Python API
-            String url = ragServiceUrl + "/api/audit/code";
-            log.info("调用代码审计 API: {}, 代码长度: {}", url, code.length());
+            String url = ragServiceUrl + "/api/check/quality";
+            log.info("调用代码质量检查 API: {}, 代码长度: {}", url, code.length());
             
             CodeAuditResponse response = restTemplate.postForObject(
                 url, request, CodeAuditResponse.class
             );
             
             if (response != null && response.getAuditResult() != null) {
-                log.info("代码审计成功，风险等级: {}", 
-                    response.getAuditResult().getRiskLevel());
+                log.info("代码质量检查成功，质量评分: {}", 
+                    response.getAuditResult().getSecurityScore());
             }
             
             return response;
             
         } catch (Exception e) {
             // 6. 异常处理：降级，不影响主流程
-            log.error("代码审计失败: {}", e.getMessage());
-            return createErrorAuditResponse(e.getMessage());
+            log.error("代码质量检查失败: {}", e.getMessage());
+            return createErrorQualityResponse(e.getMessage());
         }
+    }
+    
+    /**
+     * 旧版代码审计方法（保留兼容性）
+     * @deprecated 使用 checkCodeQuality 替代
+     */
+    @Deprecated
+    public CodeAuditResponse auditCode(String code, String language) {
+        return checkCodeQuality(code, language);
     }
     
     /**
@@ -228,42 +237,90 @@ public class RagEnhancementService {
     }
     
     /**
-     * 创建 Mock 审计响应（用于演示）
+     * 创建错误质量检查响应
      * 
-     * @return Mock 的审计结果
+     * @param error 错误信息
+     * @return 错误响应对象
      */
-    private CodeAuditResponse createMockAuditResponse() {
+    private CodeAuditResponse createErrorQualityResponse(String error) {
+        CodeAuditResponse response = new CodeAuditResponse();
+        CodeAuditResponse.AuditResult result = new CodeAuditResponse.AuditResult();
+        result.setSummary("质量检查失败");
+        result.setRiskLevel("UNKNOWN");
+        result.setSecurityScore(0);
+        result.setError(error);
+        response.setAuditResult(result);
+        return response;
+    }
+    
+    /**
+     * 创建 Mock 质量检查响应（用于演示）
+     * 
+     * @return Mock 的质量检查结果
+     */
+    private CodeAuditResponse createMockQualityResponse() {
         CodeAuditResponse response = new CodeAuditResponse();
         
-        // 审计结果
+        // 质量检查结果
         CodeAuditResponse.AuditResult auditResult = new CodeAuditResponse.AuditResult();
-        auditResult.setSummary("检测到 1 个高危漏洞：SQL 注入");
-        auditResult.setRiskLevel("HIGH");
-        auditResult.setSecurityScore(25);
+        auditResult.setSummary("代码质量检查完成，发现 2 个规范问题");
+        auditResult.setRiskLevel("LOW");  // 质量问题通常不是高风险
+        auditResult.setSecurityScore(85);  // 质量评分
         
-        // 漏洞信息
-        CodeAuditResponse.Vulnerability vuln = new CodeAuditResponse.Vulnerability();
-        vuln.setId("SQL_INJECTION_001");
-        vuln.setType("SQL Injection");
-        vuln.setSeverity("HIGH");
-        vuln.setConfidence("HIGH");
-        vuln.setLocation("line 15");
-        vuln.setDescription("用户输入直接拼接到 SQL 查询中，存在 SQL 注入风险");
-        vuln.setTaintPath("HttpServletRequest.getParameter() -> String.format() -> jdbc.execute()");
-        vuln.setImpact("攻击者可以执行任意 SQL 命令，导致数据泄露或篡改");
-        vuln.setExploitScenario("攻击者输入: ' OR '1'='1 --");
+        // 规范问题1：缺少分号
+        CodeAuditResponse.Vulnerability issue1 = new CodeAuditResponse.Vulnerability();
+        issue1.setId("SEMICOLON_MISSING_001");
+        issue1.setType("代码规范");
+        issue1.setSeverity("MEDIUM");
+        issue1.setConfidence("HIGH");
+        issue1.setLocation("line 3");
+        issue1.setDescription("缺少分号，可能导致自动分号插入机制的怪异行为");
+        issue1.setImpact("代码可读性和可维护性降低，可能引入潜在bug");
         
         // 修复建议
-        CodeAuditResponse.Fix fix = new CodeAuditResponse.Fix();
-        fix.setRecommendation("使用 PreparedStatement 进行参数化查询");
-        fix.setCodeExample("PreparedStatement ps = conn.prepareStatement(\"SELECT * FROM users WHERE id = ?\");\nps.setString(1, userId);");
+        CodeAuditResponse.Fix fix1 = new CodeAuditResponse.Fix();
+        fix1.setRecommendation("在语句末尾添加分号");
+        fix1.setCodeExample("// bad\nconst reaction = \"No! That's impossible!\"\n\n// good\nconst reaction = \"No! That's impossible!\";");
+        fix1.setReferences(java.util.List.of(
+            "https://eslint.org/docs/rules/semi",
+            "https://github.com/airbnb/javascript#semicolons"
+        ));
+        issue1.setFix(fix1);
         
-        vuln.setFix(fix);
-        auditResult.setVulnerabilities(java.util.List.of(vuln));
+        // 规范问题2：v-for缺少key
+        CodeAuditResponse.Vulnerability issue2 = new CodeAuditResponse.Vulnerability();
+        issue2.setId("VFOR_KEY_MISSING_001");
+        issue2.setType("Vue规范");
+        issue2.setSeverity("HIGH");
+        issue2.setConfidence("HIGH");
+        issue2.setLocation("line 8");
+        issue2.setDescription("v-for循环缺少key属性，可能导致DOM复用错误");
+        issue2.setImpact("列表更新时可能出现渲染异常，影响用户体验");
+        
+        // 修复建议
+        CodeAuditResponse.Fix fix2 = new CodeAuditResponse.Fix();
+        fix2.setRecommendation("为v-for循环添加唯一的key属性");
+        fix2.setCodeExample("// bad\n<div v-for=\"item in list\">{{item.name}}</div>\n\n// good\n<div v-for=\"item in list\" :key=\"item.id\">{{item.name}}</div>");
+        fix2.setReferences(java.util.List.of(
+            "https://vuejs.org/style-guide/rules-essential.html#use-key-with-v-for",
+            "https://eslint.vuejs.org/rules/require-v-for-key.html"
+        ));
+        issue2.setFix(fix2);
+        
+        auditResult.setVulnerabilities(java.util.List.of(issue1, issue2));
         
         response.setAuditResult(auditResult);
         
         return response;
+    }
+    
+    /**
+     * 创建 Mock 审计响应（用于演示，保留兼容性）
+     * @deprecated 使用 createMockQualityResponse 替代
+     */
+    @Deprecated
+    private CodeAuditResponse createMockAuditResponse() {
+        return createMockQualityResponse();
     }
 
 }

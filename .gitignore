@@ -38,3 +38,5 @@ build/
 .vscode/
 
 *.md
+*.text
+*.jsonl
