@@ -163,22 +163,22 @@ public class AiCodeGeneratorFacade {
         if (codeGenTypeEnum == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "生成类型为空");
         }
-                // ========== 新增：扣费逻辑 ==========
-        // 1. 计算消耗积分
-        int cost = CodeGenCostEnum.getCost(codeGenTypeEnum);
-        
-        // 2. 预扣费
-        boolean deductSuccess = userWalletService.tryDeduct(loginUser.getId(), cost);
-        if (!deductSuccess) {
-            log.warn("积分不足, userId: {}, 需要: {}", loginUser.getId(), cost);
-            return Flux.error(new BusinessException(ErrorCode.OPERATION_ERROR, 
-                "积分不足，当前操作需要 " + cost + " 积分，请先充值"));
-        }
-        
-        log.info("预扣费成功（流式）, userId: {}, cost: {}, type: {}", 
-            loginUser.getId(), cost, codeGenTypeEnum.getValue());
-        // ====================================
-        
+//                // ========== 新增：扣费逻辑 ==========
+//        // 1. 计算消耗积分
+//        int cost = CodeGenCostEnum.getCost(codeGenTypeEnum);
+//
+//        // 2. 预扣费
+//        boolean deductSuccess = userWalletService.tryDeduct(loginUser.getId(), cost);
+//        if (!deductSuccess) {
+//            log.warn("积分不足, userId: {}, 需要: {}", loginUser.getId(), cost);
+//            return Flux.error(new BusinessException(ErrorCode.OPERATION_ERROR,
+//                "积分不足，当前操作需要 " + cost + " 积分，请先充值"));
+//        }
+//
+//        log.info("预扣费成功（流式）, userId: {}, cost: {}, type: {}",
+//            loginUser.getId(), cost, codeGenTypeEnum.getValue());
+//        // ====================================
+//
         
         // 立即返回初始消息，防止客户端超时
         String startMessage = JSONUtil.toJsonStr(Map.of(
@@ -212,25 +212,25 @@ public class AiCodeGeneratorFacade {
             }
         };
 
-        // 7. 添加回滚逻辑
-        Flux<String> streamWithRollback = actualStream
-            .doOnComplete(() -> {
-                // 生成成功
-                log.info("流式代码生成成功, userId: {}, appId: {}, cost: {}", 
-                    loginUser.getId(), appId, cost);
-            })
-            .doOnError(error -> {
-                // 生成失败，回滚积分
-                log.error("流式代码生成失败，回滚积分, userId: {}, cost: {}", 
-                    loginUser.getId(), cost, error);
-                userWalletService.rollback(loginUser.getId(), cost);
-            })
-            .doOnCancel(() -> {
-                // 用户取消，回滚积分
-                log.warn("用户取消生成，回滚积分, userId: {}, cost: {}", 
-                    loginUser.getId(), cost);
-                userWalletService.rollback(loginUser.getId(), cost);
-            });
+//        // 7. 添加回滚逻辑
+//        Flux<String> streamWithRollback = actualStream
+//            .doOnComplete(() -> {
+//                // 生成成功
+//                log.info("流式代码生成成功, userId: {}, appId: {}, cost: {}",
+//                    loginUser.getId(), appId, cost);
+//            })
+//            .doOnError(error -> {
+//                // 生成失败，回滚积分
+//                log.error("流式代码生成失败，回滚积分, userId: {}, cost: {}",
+//                    loginUser.getId(), cost, error);
+//                userWalletService.rollback(loginUser.getId(), cost);
+//            })
+//            .doOnCancel(() -> {
+//                // 用户取消，回滚积分
+//                log.warn("用户取消生成，回滚积分, userId: {}, cost: {}",
+//                    loginUser.getId(), cost);
+//                userWalletService.rollback(loginUser.getId(), cost);
+//            });
         
         // 使用 Flux.concat 先返回初始消息，再返回完整实际数据流
         return Flux.concat(

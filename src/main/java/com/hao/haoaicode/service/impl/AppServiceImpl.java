@@ -278,9 +278,9 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         return streamHandlerExecutor.doExecute(codeStream, appId, loginUser, codeGenTypeEnum)
                 .doFinally(signalType -> {
                     MonitorContextHolder.clearContext();
-                    log.info("代码生成完成，appId: {}, 触发代码审计", appId);
+                    log.info("代码生成完成，appId: {}, 触发代码质量检查", appId);
                     
-                    // 异步触发代码审计
+                    // 异步触发代码质量检查
                     CompletableFuture.runAsync(() -> {
                         try {
                             // 等待一小段时间，确保文件已保存
@@ -290,40 +290,40 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
                             String generatedCode = getGeneratedCodeFromFile(appId, codeGenTypeEnum);
                             
                             if (StrUtil.isNotBlank(generatedCode)) {
-                                // 2. 调用代码审计
-                                log.info("开始审计代码，appId: {}, 代码长度: {}", appId, generatedCode.length());
-                                CodeAuditResponse auditResult = ragEnhancementService.auditCode(
+                                // 2. 调用代码质量检查
+                                log.info("开始质量检查代码，appId: {}, 代码长度: {}", appId, generatedCode.length());
+                                CodeAuditResponse qualityResult = ragEnhancementService.checkCodeQuality(
                                     generatedCode, 
                                     getLanguageFromCodeType(codeGenTypeEnum)
                                 );
                                 
-                                // 3. 处理审计结果
-                                if (auditResult != null && auditResult.getAuditResult() != null) {
-                                    String riskLevel = auditResult.getAuditResult().getRiskLevel();
-                                    Integer score = auditResult.getAuditResult().getSecurityScore();
-                                    log.info("代码审计完成，appId: {}, 风险等级: {}, 安全评分: {}", 
+                                // 3. 处理质量检查结果
+                                if (qualityResult != null && qualityResult.getAuditResult() != null) {
+                                    String riskLevel = qualityResult.getAuditResult().getRiskLevel();
+                                    Integer score = qualityResult.getAuditResult().getSecurityScore();
+                                    log.info("代码质量检查完成，appId: {}, 风险等级: {}, 质量评分: {}", 
                                         appId, riskLevel, score);
                                     
-                                    // 4. 保存审计结果到 Redis
-                                    saveAuditResult(appId, auditResult);
+                                    // 4. 保存质量检查结果到 Redis
+                                    saveAuditResult(appId, qualityResult);
                                     
                                     // 5. 高危代码告警
                                     if ("HIGH".equals(riskLevel)) {
-                                        log.warn("⚠️ 检测到高危代码！appId: {}, 漏洞数: {}", 
+                                        log.warn("⚠️ 检测到高危规范问题！appId: {}, 问题数: {}", 
                                             appId, 
-                                            auditResult.getAuditResult().getVulnerabilities() != null ? 
-                                                auditResult.getAuditResult().getVulnerabilities().size() : 0);
+                                            qualityResult.getAuditResult().getVulnerabilities() != null ? 
+                                                qualityResult.getAuditResult().getVulnerabilities().size() : 0);
                                     }
                                 } else {
-                                    log.warn("审计结果为空，appId: {}", appId);
+                                    log.warn("质量检查结果为空，appId: {}", appId);
                                 }
                             } else {
                                 log.warn("未找到生成的代码，appId: {}", appId);
                             }
                             
                         } catch (Exception e) {
-                            log.error("代码审计失败，appId: {}, error: {}", appId, e.getMessage());
-                            // 审计失败不影响主流程
+                            log.error("代码质量检查失败，appId: {}, error: {}", appId, e.getMessage());
+                            // 质量检查失败不影响主流程
                         }
                     });
 
@@ -500,10 +500,10 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     }
 
     /**
-     * 将审计结果保存到 Redis
+     * 将质量检查结果保存到 Redis
      * 
      * @param appId 应用ID
-     * @param auditResult 审计结果
+     * @param auditResult 质量检查结果
      */
     private void saveAuditResult(Long appId, CodeAuditResponse auditResult) {
         try {
@@ -516,10 +516,10 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
             // 保存到 Redis，设置过期时间（1 小时）
             stringRedisTemplate.opsForValue().set(key, json, 1, TimeUnit.HOURS);
             
-            log.info("审计结果已保存到 Redis，appId: {}, key: {}", appId, key);
+            log.info("质量检查结果已保存到 Redis，appId: {}, key: {}", appId, key);
             
         } catch (Exception e) {
-            log.error("保存审计结果失败: {}", e.getMessage());
+            log.error("保存质量检查结果失败: {}", e.getMessage());
         }
     }
 

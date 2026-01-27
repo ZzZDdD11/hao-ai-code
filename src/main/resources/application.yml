@@ -101,9 +101,68 @@ rag:
   enabled: true
   mock: false  # 使用真实 Python 服务
   service:
-    url: http://localhost:8000  # Python 服务端口
+    url: http://localhost:8001  # Python 服务端口
     timeout: 120000  # 超时时间 120 秒（2 分钟）
   features:
     vector: true
     graph: true
     web: false
+
+# Resilience4j 配置
+resilience4j:
+  # 1. 重试机制 (Retry)
+  retry:
+    instances:
+      aiService:
+        max-attempts: 3                   # 最大重试次数
+        wait-duration: 2s                 # 每次重试间隔 2秒
+        enable-exponential-backoff: true  # 开启指数退避 (2s -> 4s -> 8s)
+        exponential-backoff-multiplier: 2
+        retry-exceptions:                 # 哪些异常需要重试？
+          - java.net.SocketTimeoutException
+          - java.io.IOException
+          - org.springframework.web.client.ResourceAccessException
+        ignore-exceptions:                # 哪些异常不重试？(比如 401 账号密码错误，重试也没用)
+          - com.hao.haoaicode.exception.BusinessException
+
+  # 2. 熔断机制 (Circuit Breaker)
+  circuitbreaker:
+    instances:
+      aiService:
+        register-health-indicator: true
+        sliding-window-size: 10           # 滑动窗口大小 (统计最近 10 次请求)
+        minimum-number-of-calls: 5        # 至少请求 5 次才开始计算失败率
+        permitted-number-of-calls-in-half-open-state: 3 # 半开状态下允许通过的请求数
+        automatic-transition-from-open-to-half-open-enabled: true # 自动从“打开”转为“半开”
+        wait-duration-in-open-state: 10s  # 熔断 10秒后，进入半开状态尝试恢复
+        failure-rate-threshold: 50        # 失败率超过 50% 就熔断
+        event-consumer-buffer-size: 10
+
+  # 限流器配置（可选）
+  ratelimiter:
+    configs:
+      default:
+        # 限流周期：1秒
+        limit-refresh-period: 1s
+        # 每个周期允许的请求数：10个
+        limit-for-period: 10
+        # 等待许可的超时时间：5秒
+        timeout-duration: 5s
+    instances:
+      aiService:
+        base-config: default
+        # AI 服务限流：每秒5个请求
+        limit-for-period: 5
+
+  # 超时配置（可选）
+  timelimiter:
+    configs:
+      default:
+        # 超时时间：120秒
+        timeout-duration: 120s
+        # 取消运行中的 Future
+        cancel-running-future: true
+    instances:
+      aiService:
+        base-config: default
+        timeout-duration: 180s

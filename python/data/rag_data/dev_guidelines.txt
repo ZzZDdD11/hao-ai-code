@@ -1,0 +1,378 @@
+【Airbnb JavaScript Style Guide() {】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Table of Contents】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Types】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【References】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Objects】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Arrays】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Destructuring】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Strings】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Functions】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Arrow Functions】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Classes & Constructors】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Modules】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Iterators and Generators】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Properties】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Variables】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Hoisting】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Comparison Operators & Equality】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Blocks】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Control Statements】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Comments】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Whitespace】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Commas】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Semicolons】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Type Casting & Coercion】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Naming Conventions】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Accessors】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Events】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【jQuery】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【ECMAScript 5 Compatibility】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【ECMAScript 6+ (ES 2015+) Styles】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Standard Library】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Testing】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Performance】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Resources】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【In the Wild】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Translation】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【The JavaScript Style Guide Guide】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Chat With Us About JavaScript】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Contributors】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【License】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【Amendments】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
+【};】
+规则描述：
+
+详细信息：
+
+优先级：中
+来源：Airbnb JavaScript Guide
+分类：代码规范
+
