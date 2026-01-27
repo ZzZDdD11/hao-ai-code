@@ -23,9 +23,6 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 import java.lang.reflect.Method;
 import java.time.Duration;
 
-
-
-
 @Aspect
 @Component
 @Slf4j
@@ -35,6 +32,11 @@ public class RateLimitAspect {
     @Resource
     private UserService userService;
 
+    /**
+     * 执行限流
+     * @param point
+     * @param rateLimit
+     */
     @Before("@annotation(rateLimit)")
     public void doBefore(JoinPoint point, RateLimit rateLimit){
         String key = generateRateLimitKey(point, rateLimit);
@@ -92,6 +94,10 @@ public class RateLimitAspect {
         return keyBuilder.toString();
     }
 
+    /**
+     * 获取IP
+     * @return
+     */
     private String getClientIP() {
         ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
         if (attributes == null) {
