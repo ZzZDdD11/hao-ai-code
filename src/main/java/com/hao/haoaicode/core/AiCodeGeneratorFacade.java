@@ -22,6 +22,8 @@ import com.hao.haoaicode.service.UserWalletService;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.service.TokenStream;
 import dev.langchain4j.service.tool.ToolExecution;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -159,6 +161,8 @@ public class AiCodeGeneratorFacade {
      * @param userMessage     用户提示词
      * @param codeGenTypeEnum 生成类型
      */
+    @CircuitBreaker(name = "aiService", fallbackMethod = "generateFallback")
+    @Retry(name = "aiService")
     public Flux<String> generateAndSaveCodeStream(String userMessage, CodeGenTypeEnum codeGenTypeEnum, Long appId, User loginUser) {
         if (codeGenTypeEnum == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "生成类型为空");
@@ -288,6 +292,22 @@ public class AiCodeGeneratorFacade {
                     })
                     .start();
         });
+    }
+
+    /**
+     * 降级方法 (Fallback)
+     * 参数必须和原方法一致，最后多一个 Throwable
+     */
+    public Flux<String> generateFallback(String sessionId, String userMessage, Throwable t) {
+        log.error("AI 服务调用失败，触发降级，sessionId: {}", sessionId, t);
+
+        // 返回兜底的友好的流式消息
+        String fallbackJson = JSONUtil.toJsonStr(Map.of(
+                "type", "ERROR",
+                "message", "AI 服务暂时不可用（触发熔断保护），请稍后再试。\n错误信息：" + t.getMessage()
+        ));
+
+        return Flux.just(fallbackJson);
     }
 
 }

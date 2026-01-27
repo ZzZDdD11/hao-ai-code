@@ -1,6 +1,14 @@
 package com.hao.haoaicode.controller;
 
+import com.hao.haoaicode.common.BaseResponse;
+import com.hao.haoaicode.common.ResultUtils;
+import com.hao.haoaicode.constant.UserConstant;
+import com.hao.haoaicode.exception.BusinessException;
+import com.hao.haoaicode.exception.ErrorCode;
+import com.hao.haoaicode.model.entity.User;
+import com.hao.haoaicode.service.UserService;
 import com.mybatisflex.core.paginate.Page;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -25,6 +33,9 @@ public class UserWalletController {
 
     @Autowired
     private UserWalletService userWalletService;
+
+    @Autowired
+    private UserService userService;
 
 
     /**
@@ -90,6 +101,22 @@ public class UserWalletController {
     @GetMapping("page")
     public Page<UserWallet> page(Page<UserWallet> page) {
         return userWalletService.page(page);
+    }
+
+    /**
+     * 获取当前登录用户的钱包信息
+     *
+     * @return 用户钱包信息
+     */
+    @GetMapping("getMyWallet")
+    public BaseResponse<UserWallet> getMyWallet(HttpServletRequest request) {
+        // 获取当前登录用户
+        User loginUser = userService.getLoginUser(request);
+        if (loginUser == null) {
+            throw new BusinessException(ErrorCode.NOT_LOGIN_ERROR);
+        }
+        UserWallet wallet = userWalletService.getById(loginUser.getId());
+        return ResultUtils.success(wallet);
     }
 
 }
