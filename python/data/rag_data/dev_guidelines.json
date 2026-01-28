@@ -1,0 +1,338 @@
+[
+  {
+    "name": "Airbnb JavaScript Style Guide() {",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Table of Contents",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Types",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "References",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Objects",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Arrays",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Destructuring",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Strings",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Functions",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Arrow Functions",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Classes & Constructors",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Modules",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Iterators and Generators",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Properties",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Variables",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Hoisting",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Comparison Operators & Equality",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Blocks",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Control Statements",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Comments",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Whitespace",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Commas",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Semicolons",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Type Casting & Coercion",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Naming Conventions",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Accessors",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Events",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "jQuery",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "ECMAScript 5 Compatibility",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "ECMAScript 6+ (ES 2015+) Styles",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Standard Library",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Testing",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Performance",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Resources",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "In the Wild",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Translation",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "The JavaScript Style Guide Guide",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Chat With Us About JavaScript",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Contributors",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "License",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "Amendments",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  },
+  {
+    "name": "};",
+    "description": "\n",
+    "details": "\n",
+    "priority": "中",
+    "source": "Airbnb JavaScript Guide",
+    "category": "代码规范"
+  }
+]

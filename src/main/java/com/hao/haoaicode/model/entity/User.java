@@ -96,34 +96,9 @@ public class User implements Serializable {
     @Column(value = "isDelete", isLogicDelete = true)
     private Integer isDelete;
 
-    /**
-     * 会员过期时间
-     */
-    @Column("vipExpireTime")
-    private LocalDateTime vipExpireTime;
 
-    /**
-     * 会员兑换码
-     */
-    @Column("vipCode")
-    private String vipCode;
 
-    /**
-     * 会员编号
-     */
-    @Column("vipNumber")
-    private Long vipNumber;
 
-    /**
-     * 分享码
-     */
-    @Column("shareCode")
-    private String shareCode;
 
-    /**
-     * 邀请用户id
-     */
-    @Column("inviteUser")
-    private Long inviteUser;
 
 }
