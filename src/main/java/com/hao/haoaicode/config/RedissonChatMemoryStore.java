@@ -84,12 +84,13 @@ public class RedissonChatMemoryStore implements ChatMemoryStore {
 
 
     /**
-     * 更新记忆
+     * 更新记忆，把信息存储到Redis中做会话窗口
      */
     @Override
     public void updateMessages(Object memoryId, List<ChatMessage> messages) {
         
         String key = buildKey(memoryId);
+
         try {
             RBucket<String> bucket = redissonClient.getBucket(key);
             if (messages == null || messages.isEmpty()) {
@@ -98,6 +99,7 @@ public class RedissonChatMemoryStore implements ChatMemoryStore {
             }
             String json = ChatMessageSerializer.messagesToJson(messages);
             bucket.set(json, ttl);
+
             log.debug("Updated messages in Redis, memoryId: {}, count: {}", memoryId, messages.size());
         } catch (Exception e) {
             log.error("Failed to update messages in Redis, memoryId: {}", memoryId, e);

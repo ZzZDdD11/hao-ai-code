@@ -12,6 +12,7 @@
 	],
 	"settings": {
 		"java.compile.nullAnalysis.mode": "automatic",
-		"kiroAgent.configureMCP": "Disabled"
+		"kiroAgent.configureMCP": "Disabled",
+		"java.configuration.updateBuildConfiguration": "interactive"
 	}
 }
