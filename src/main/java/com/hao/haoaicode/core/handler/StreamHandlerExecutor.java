@@ -3,6 +3,7 @@ package com.hao.haoaicode.core.handler;
 import com.hao.haoaicode.model.entity.User;
 import com.hao.haoaicode.model.enums.CodeGenTypeEnum;
 import com.hao.haoaicode.service.ChatHistoryService;
+import dev.langchain4j.service.TokenStream;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -24,14 +25,31 @@ public class StreamHandlerExecutor {
     @Resource
     private SimpleTextStreamHandler simpleTextStreamHandler;
 
+    /**
+     * 处理 TokenStream (VUE_PROJECT)
+     */
+    public Flux<String> executeTokenStream(TokenStream tokenStream, long appId, User loginUser) {
+        return jsonMessageStreamHandler.handle(tokenStream, appId, loginUser);
+    }
+
+    /**
+     * 处理普通文本流 (HTML, MULTI_FILE)
+     */
+    public Flux<String> executeTextStream(Flux<String> originFlux, long appId, User loginUser, CodeGenTypeEnum codeGenType) {
+        return simpleTextStreamHandler.handle(originFlux, appId, loginUser, codeGenType);
+    }
+
+    /**
+     * 保持旧接口兼容（如果有需要），或者废弃
+     * 目前看来主要逻辑将迁移到上述两个特定方法
+     */
     public Flux<String> doExecute(Flux<String> originFlux,
                                   long appId, User loginUser, CodeGenTypeEnum codeGenType) {
-        return switch (codeGenType) {
-            case VUE_PROJECT ->
-                    jsonMessageStreamHandler.handle(originFlux, appId, loginUser);
-            case HTML, MULTI_FILE ->
-                    simpleTextStreamHandler.handle(originFlux, appId, loginUser);
-        };
+        if (codeGenType == CodeGenTypeEnum.VUE_PROJECT) {
+            log.warn("VUE_PROJECT should use executeTokenStream instead of doExecute with Flux<String>");
+            throw new UnsupportedOperationException("VUE_PROJECT support has been migrated to TokenStream");
+        }
+        return simpleTextStreamHandler.handle(originFlux, appId, loginUser, codeGenType);
     }
 
 }

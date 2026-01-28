@@ -5,23 +5,16 @@ import com.hao.haoaicode.ai.AiCodeGeneratorService;
 import com.hao.haoaicode.ai.model.HtmlCodeResult;
 import com.hao.haoaicode.ai.model.MultiFileCodeResult;
 import com.hao.haoaicode.ai.AiCodeGeneratorServiceFactory;
-import com.hao.haoaicode.ai.model.message.AiResponseMessage;
-import com.hao.haoaicode.ai.model.message.ToolExecutedMessage;
-import com.hao.haoaicode.ai.model.message.ToolRequestMessage;
-import com.hao.haoaicode.constant.AppConstant;
-import com.hao.haoaicode.core.builder.VueProjectBuilder;
+import com.hao.haoaicode.core.handler.StreamHandlerExecutor;
 import com.hao.haoaicode.exception.BusinessException;
 import com.hao.haoaicode.exception.ErrorCode;
 import com.hao.haoaicode.model.entity.User;
 import com.hao.haoaicode.model.enums.CodeGenCostEnum;
 import com.hao.haoaicode.model.enums.CodeGenTypeEnum;
-import com.hao.haoaicode.parser.CodeParserExecutor;
 import com.hao.haoaicode.saver.CodeFileSaverExecutor;
 import com.hao.haoaicode.service.UserWalletService;
 
-import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.service.TokenStream;
-import dev.langchain4j.service.tool.ToolExecution;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
 import jakarta.annotation.Resource;
@@ -29,7 +22,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
 import java.io.File;
@@ -45,7 +37,7 @@ public class AiCodeGeneratorFacade {
     @Resource
     private AiCodeGeneratorServiceFactory aiCodeGeneratorServiceFactory;
     @Resource
-    private VueProjectBuilder vueProjectBuilder;
+    private StreamHandlerExecutor streamHandlerExecutor;
     @Resource
     private UserWalletService userWalletService;
 
@@ -61,33 +53,7 @@ public class AiCodeGeneratorFacade {
         return userId + ":" + appId;
     }
 
-    /**
-     * 通用流式代码处理方法
-     *
-     * @param codeStream  代码流
-     * @param codeGenType 代码生成类型
-     * @param appId
-     * @return 流式响应
-     */
-    private Flux<String> processCodeStream(Flux<String> codeStream, CodeGenTypeEnum codeGenType, Long appId) {
-        StringBuilder codeBuilder = new StringBuilder();
-        return codeStream.doOnNext(chunk -> {
-            // 实时收集代码片段
-            codeBuilder.append(chunk);
-        }).doOnComplete(() -> {
-            String completeCode = codeBuilder.toString();
-            Mono.fromCallable(() -> {
-                        // 代码解析
-                        Object parsedResult = CodeParserExecutor.executeParser(completeCode, codeGenType);
-                        // 代码保存
-                        return CodeFileSaverExecutor.executeSaver(parsedResult, codeGenType, appId);
-                    })
-                    .subscribeOn(Schedulers.boundedElastic())
-                    .doOnSuccess(savedDir -> log.info("保存成功: {}", savedDir.getAbsolutePath()))
-                    .doOnError(e -> log.error("保存失败", e))
-                    .subscribe();
-        });
-    }
+
 
     /**
      * 统一入口：根据类型生成并保存代码
@@ -200,15 +166,15 @@ public class AiCodeGeneratorFacade {
         Flux<String> actualStream = switch (codeGenTypeEnum) {
             case HTML -> {
                 Flux<String> codeStream = service.generateHtmlCodeStream(sessionId, userMessage);
-                yield processCodeStream(codeStream, CodeGenTypeEnum.HTML, appId);
+                yield streamHandlerExecutor.executeTextStream(codeStream, appId, loginUser, CodeGenTypeEnum.HTML);
             }
             case MULTI_FILE -> {
                 Flux<String> codeStream = service.generateMultiFileCodeStream(sessionId, userMessage);
-                yield processCodeStream(codeStream, CodeGenTypeEnum.MULTI_FILE, appId);
+                yield streamHandlerExecutor.executeTextStream(codeStream, appId, loginUser, CodeGenTypeEnum.MULTI_FILE);
             }
             case VUE_PROJECT -> {
                 TokenStream tokenStream = service.generateVueProjectCodeStream(sessionId, userMessage);
-                yield processTokenStream(tokenStream, String.valueOf(appId));
+                yield streamHandlerExecutor.executeTokenStream(tokenStream, appId, loginUser);
             }
             default -> {
                 String errorMessage = "不支持的生成类型：" + codeGenTypeEnum.getValue();
@@ -244,55 +210,7 @@ public class AiCodeGeneratorFacade {
     }
 
 
-    /**
-     * 将 TokenStream 转换为 Flux<String>，并传递工具调用信息
-     *
-     * @param tokenStream TokenStream 对象
-     * @return Flux<String> 流式响应
-     */
-    private Flux<String> processTokenStream(TokenStream tokenStream, String appId) {
-        return Flux.create(sink -> {
-            // ✅ 注册取消回调 - 当前端断开连接时触发
-            sink.onCancel(() -> {
-                log.info("客户端取消订阅，appId: {}", appId);
-                // 这里可以做一些清理工作，比如记录监控指标
-            });
-            
-            tokenStream.onPartialResponse((String partialResponse) -> {
-                        // ✅ 可选：检查是否已取消，避免无效推送
-                        if (sink.isCancelled()) {
-                            return;
-                        }
-                        AiResponseMessage aiResponseMessage = new AiResponseMessage(partialResponse);
-                        sink.next(JSONUtil.toJsonStr(aiResponseMessage));
-                    })
-                    .onPartialToolExecutionRequest((index, toolExecutionRequest) -> {
-                        if (sink.isCancelled()) return;
-                        ToolRequestMessage toolRequestMessage = new ToolRequestMessage(toolExecutionRequest);
-                        sink.next(JSONUtil.toJsonStr(toolRequestMessage));
-                    })
-                    .onToolExecuted((ToolExecution toolExecution) -> {
-                        if (sink.isCancelled()) return;
-                        ToolExecutedMessage toolExecutedMessage = new ToolExecutedMessage(toolExecution);
-                        sink.next(JSONUtil.toJsonStr(toolExecutedMessage));
-                    })
-                    .onCompleteResponse((ChatResponse response) -> {
-                        // ✅ 如果已取消，跳过构建
-                        if (sink.isCancelled()) {
-                            log.info("已取消，跳过 Vue 项目构建");
-                            return;
-                        }
-                        String projectPath = AppConstant.CODE_OUTPUT_ROOT_DIR + File.separator + "vue_project_" + appId;
-                        vueProjectBuilder.buildProject(projectPath);
-                        sink.complete();
-                    })
-                    .onError((Throwable error) -> {
-                        error.printStackTrace();
-                        sink.error(error);
-                    })
-                    .start();
-        });
-    }
+    
 
     /**
      * 降级方法 (Fallback)
