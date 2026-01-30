@@ -96,7 +96,6 @@ management:
     redis:
       enabled: false  # 保持 Redis 健康检查开启
 
-<<<<<<< HEAD
 # RAG 服务配置
 rag:
   enabled: true
@@ -110,18 +109,13 @@ rag:
     web: false
 
 # Resilience4j 配置
-=======
->>>>>>> 6628819f1e38b63ed0ebdc9ef8c26dc86de62a5b
+
 resilience4j:
   # 1. 重试机制 (Retry)
   retry:
     instances:
       aiService:
-<<<<<<< HEAD
-        max-attempts: 3                   # 最大重试次数
-=======
         max-attempts: 2                   # 最大重试次数
->>>>>>> 6628819f1e38b63ed0ebdc9ef8c26dc86de62a5b
         wait-duration: 2s                 # 每次重试间隔 2秒
         enable-exponential-backoff: true  # 开启指数退避 (2s -> 4s -> 8s)
         exponential-backoff-multiplier: 2
@@ -144,7 +138,6 @@ resilience4j:
         wait-duration-in-open-state: 10s  # 熔断 10秒后，进入半开状态尝试恢复
         failure-rate-threshold: 50        # 失败率超过 50% 就熔断
         event-consumer-buffer-size: 10
-<<<<<<< HEAD
 
   # 限流器配置（可选）
   ratelimiter:
@@ -174,5 +167,3 @@ resilience4j:
       aiService:
         base-config: default
         timeout-duration: 180s
-=======
->>>>>>> 6628819f1e38b63ed0ebdc9ef8c26dc86de62a5b
