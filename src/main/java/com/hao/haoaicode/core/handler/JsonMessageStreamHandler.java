@@ -57,7 +57,7 @@ public class JsonMessageStreamHandler {
         Set<String> seenToolIds = new HashSet<>();
 
         return Flux.create(sink -> {
-            // ✅ 注册取消回调
+            // 注册取消回调
             sink.onCancel(() -> {
                 log.info("客户端取消订阅，appId: {}", appId);
             });
@@ -66,36 +66,32 @@ public class JsonMessageStreamHandler {
                         if (sink.isCancelled()) return;
                         
                         // 1. 发送给前端
-                        AiResponseMessage aiResponseMessage = new AiResponseMessage(partialResponse);
-                        sink.next(JSONUtil.toJsonStr(aiResponseMessage));
+                        sink.next(partialResponse);
                         
                         // 2. 收集历史记录
                         chatHistoryStringBuilder.append(partialResponse);
                     })
-                    .onPartialToolExecutionRequest((index, toolExecutionRequest) -> {
+                    .beforeToolExecution((beforeToolExecutionHandler) -> {
                         if (sink.isCancelled()) return;
-                        
-                        // 1. 发送给前端
-                        ToolRequestMessage toolRequestMessage = new ToolRequestMessage(toolExecutionRequest);
-                        sink.next(JSONUtil.toJsonStr(toolRequestMessage));
-                        
-                        // 2. 收集历史记录 (只在第一次收到该工具请求时记录)
-                        String toolId = toolRequestMessage.getId();
-                        if (toolId != null && !seenToolIds.contains(toolId)) {
-                            seenToolIds.add(toolId);
-                            chatHistoryStringBuilder.append("\n\n[选择工具] 写入文件\n\n");
-                        }
+
+                            String toolId = beforeToolExecutionHandler.request().id(); 
+                            // 如果工具是第一次出现，添加说明
+                            if (toolId != null && !seenToolIds.contains(toolId)) {
+                                seenToolIds.add(toolId);
+                                String marker = "\n\n[选择工具] 写入文件\n\n";
+                                chatHistoryStringBuilder.append(marker);
+                                sink.next(marker);  // 发给前端作为一段说明
+                            }
                     })
                     .onToolExecuted((ToolExecution toolExecution) -> {
                         if (sink.isCancelled()) return;
                         
-                        // 1. 发送给前端
                         ToolExecutedMessage toolExecutedMessage = new ToolExecutedMessage(toolExecution);
-                        sink.next(JSONUtil.toJsonStr(toolExecutedMessage));
-                        
-                        // 2. 收集历史记录
-                        String result = formatToolExecutionResult(toolExecutedMessage);
-                        chatHistoryStringBuilder.append(String.format("\n\n%s\n\n", result));
+                        String result = formatToolExecutionResult(toolExecutedMessage);  // 里边解析 relativeFilePath & content
+                        String output = "\n\n" + result + "\n\n";
+
+                        chatHistoryStringBuilder.append(output);
+                        sink.next(output);  // 直接把 Markdown 文本推给前端
                     })
                     .onCompleteResponse((ChatResponse response) -> {
                         if (sink.isCancelled()) {

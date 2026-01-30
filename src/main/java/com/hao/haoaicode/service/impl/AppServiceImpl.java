@@ -275,8 +275,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         // 7. 调用模型生成代码
         Flux<String> codeStream = aiCodeGeneratorFacade.generateAndSaveCodeStream(message, codeGenTypeEnum, appId, loginUser);
         // 8. 收集生成的代码，进行处理并存储到对话历史
-        return streamHandlerExecutor.doExecute(codeStream, appId, loginUser, codeGenTypeEnum)
-                .doFinally(signalType -> {
+        return codeStream.doFinally(signalType -> {
                     MonitorContextHolder.clearContext();
                     log.info("代码生成完成，appId: {}, 触发代码质量检查", appId);
                     
