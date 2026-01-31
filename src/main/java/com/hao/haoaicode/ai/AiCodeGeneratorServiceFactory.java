@@ -89,7 +89,7 @@ public class AiCodeGeneratorServiceFactory {
     public AiCodeGeneratorService getService(CodeGenTypeEnum codeGenType) {
         return switch (codeGenType) {
             case HTML, MULTI_FILE -> htmlAiService();
-            case VUE_PROJECT -> vueAiService();
+            case VUE_PROJECT, VUE_PROJECT_AGENTIC -> vueAiService();
             default -> throw new BusinessException(
                 ErrorCode.SYSTEM_ERROR,
                 "不支持的代码生成类型: " + codeGenType.getValue()
