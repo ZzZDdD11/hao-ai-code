@@ -6,6 +6,8 @@ import com.hao.haoaicode.ai.model.HtmlCodeResult;
 import com.hao.haoaicode.ai.model.MultiFileCodeResult;
 import com.hao.haoaicode.ai.AiCodeGeneratorServiceFactory;
 import com.hao.haoaicode.ai.agent.VueAgenticOrchestrator;
+import com.hao.haoaicode.ai.agent.VuePlanContext;
+import com.hao.haoaicode.ai.agent.VuePlanningService;
 import com.hao.haoaicode.core.handler.StreamHandlerExecutor;
 import com.hao.haoaicode.exception.BusinessException;
 import com.hao.haoaicode.exception.ErrorCode;
@@ -43,6 +45,8 @@ public class AiCodeGeneratorFacade {
     private UserWalletService userWalletService;
     @Resource
     private VueAgenticOrchestrator vueAgenticOrchestrator;
+    @Resource
+    private VuePlanningService vuePlanningService;
 
     /**
      * 构建会话 ID
@@ -182,14 +186,28 @@ public class AiCodeGeneratorFacade {
                 yield streamHandlerExecutor.executeTextStream(codeStream, appId, loginUser, CodeGenTypeEnum.MULTI_FILE);
             }
             case VUE_PROJECT -> {
-                TokenStream skeletonStream = service.generateVueSkeletonStream(sessionId, userMessage);
+                VuePlanContext planContext = vuePlanningService.plan(userMessage);
+                String enrichedUserMessage = "【用户原始需求】\n"
+                        + planContext.getUserRequirement()
+                        + "\n\n【项目规划(JSON)】\n"
+                        + planContext.getPlanJson()
+                        + "\n\n【脚手架步骤计划】\n"
+                        + planContext.getScaffoldSteps()
+                        + "\n";
+
+                TokenStream skeletonStream = service.generateVueSkeletonStream(sessionId, enrichedUserMessage);
                 Flux<String> skeletonFlux = streamHandlerExecutor.executeTokenStream(skeletonStream, appId, loginUser);
-                TokenStream projectStream = service.generateVueProjectCodeStream(sessionId, userMessage);
+
+                String projectUserMessage = "【阶段说明】你已经根据以上规划和骨架生成结果，获得了一个最小可运行的 Vue3+Vite 项目骨架。现在请在现有骨架的基础上补充页面内容和业务逻辑，避免无意义地重复覆写已经存在的文件，除非为了修正明显错误或补充必要配置。\n\n"
+                        + enrichedUserMessage;
+                TokenStream projectStream = service.generateVueProjectCodeStream(sessionId, projectUserMessage);
                 Flux<String> projectFlux = streamHandlerExecutor.executeTokenStream(projectStream, appId, loginUser);
+
                 Flux<String> combinedFlux = Flux.concat(
+                        Flux.just("【规划阶段】已生成项目规划和脚手架步骤...\n"),
                         Flux.just("【Vue 骨架阶段】开始生成项目骨架...\n"),
                         skeletonFlux,
-                        Flux.just("【Vue 骨架阶段】已完成，开始完整项目生成...\n"),
+                        Flux.just("【Vue 骨架阶段】已完成，开始完整项目生成（在现有骨架上补充页面和逻辑）...\n"),
                         projectFlux
                 );
                 yield combinedFlux;
