@@ -59,4 +59,14 @@ public interface AiCodeGeneratorService {
      */
     @SystemMessage(fromResource = "prompt/codegen-vue-project-system-prompt.txt")
     TokenStream generateVueProjectCodeStream(@MemoryId String sessionId, @UserMessage String userMessage);
+
+    /**
+     * 生成 Vue 项目骨架代码（流式）
+     *
+     * @param sessionId 会话ID（格式：userId:appId）
+     * @param userMessage 用户消息
+     * @return 生成过程的流式响应
+     */
+    @SystemMessage(fromResource = "prompt/codegen-vue-skeleton-system-prompt.txt")
+    TokenStream generateVueSkeletonStream(@MemoryId String sessionId, @UserMessage String userMessage); 
 }

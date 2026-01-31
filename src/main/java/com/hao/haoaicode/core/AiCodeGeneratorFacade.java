@@ -5,6 +5,7 @@ import com.hao.haoaicode.ai.AiCodeGeneratorService;
 import com.hao.haoaicode.ai.model.HtmlCodeResult;
 import com.hao.haoaicode.ai.model.MultiFileCodeResult;
 import com.hao.haoaicode.ai.AiCodeGeneratorServiceFactory;
+import com.hao.haoaicode.ai.agent.VueAgenticOrchestrator;
 import com.hao.haoaicode.core.handler.StreamHandlerExecutor;
 import com.hao.haoaicode.exception.BusinessException;
 import com.hao.haoaicode.exception.ErrorCode;
@@ -40,6 +41,8 @@ public class AiCodeGeneratorFacade {
     private StreamHandlerExecutor streamHandlerExecutor;
     @Resource
     private UserWalletService userWalletService;
+    @Resource
+    private VueAgenticOrchestrator vueAgenticOrchestrator;
 
     /**
      * 构建会话 ID
@@ -159,10 +162,16 @@ public class AiCodeGeneratorFacade {
         
         // 1. 构建 sessionId
         String sessionId = buildSessionId(loginUser.getId(), appId);
-        
-        // 2. 获取共享服务（不再传 appId 和 codeGenType）
+        if(codeGenTypeEnum == CodeGenTypeEnum.VUE_PROJECT_AGENTIC){
+            log.info("进入 Agentic 分支, appId={}, message={}", appId, userMessage);
+            // 关键：走多 Agent 协作支线
+            Flux<String> stringFlux = vueAgenticOrchestrator.generateProject(userMessage, appId, loginUser);
+            return Flux.concat(
+                    Flux.just(startMessage),
+                    stringFlux
+            );
+        }
         AiCodeGeneratorService service = aiCodeGeneratorServiceFactory.getService(codeGenTypeEnum);
-        // 构建代码流
         Flux<String> actualStream = switch (codeGenTypeEnum) {
             case HTML -> {
                 Flux<String> codeStream = service.generateHtmlCodeStream(sessionId, userMessage);
@@ -173,8 +182,17 @@ public class AiCodeGeneratorFacade {
                 yield streamHandlerExecutor.executeTextStream(codeStream, appId, loginUser, CodeGenTypeEnum.MULTI_FILE);
             }
             case VUE_PROJECT -> {
-                TokenStream tokenStream = service.generateVueProjectCodeStream(sessionId, userMessage);
-                yield streamHandlerExecutor.executeTokenStream(tokenStream, appId, loginUser);
+                TokenStream skeletonStream = service.generateVueSkeletonStream(sessionId, userMessage);
+                Flux<String> skeletonFlux = streamHandlerExecutor.executeTokenStream(skeletonStream, appId, loginUser);
+                TokenStream projectStream = service.generateVueProjectCodeStream(sessionId, userMessage);
+                Flux<String> projectFlux = streamHandlerExecutor.executeTokenStream(projectStream, appId, loginUser);
+                Flux<String> combinedFlux = Flux.concat(
+                        Flux.just("【Vue 骨架阶段】开始生成项目骨架...\n"),
+                        skeletonFlux,
+                        Flux.just("【Vue 骨架阶段】已完成，开始完整项目生成...\n"),
+                        projectFlux
+                );
+                yield combinedFlux;
             }
             default -> {
                 String errorMessage = "不支持的生成类型：" + codeGenTypeEnum.getValue();

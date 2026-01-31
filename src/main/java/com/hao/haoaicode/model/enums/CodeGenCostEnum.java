@@ -10,8 +10,8 @@ import lombok.Getter;
 public enum CodeGenCostEnum {
     HTML(10, "HTML单文件生成"),
     MULTI_FILE(20, "多文件项目生成"),
-    VUE_PROJECT(50, "Vue完整项目生成");
-
+    VUE_PROJECT(50, "Vue完整项目生成"),
+    VUE_PROJECT_AGENTIC(80, "多 Agent 协作 Vue 工程项目");
     private final int cost;
     private final String description;
 

@@ -1,19 +1,24 @@
 package com.hao.haoaicode.config;
 
+import com.hao.haoaicode.monitor.AiModelMonitorListener;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
+import jakarta.annotation.Resource;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Scope;
 
 import java.time.Duration;
+import java.util.List;
 
 @Configuration
-@ConfigurationProperties(prefix = "langchain4j.open-ai.routing-chat-model")
+@ConfigurationProperties(prefix = "langchain4j.open-ai.agentic-chat-model")
 @Data
-public class RoutingAiModelConfig {
+public class AgenticStreamingChatModelConfig {
+
+    @Resource
+    AiModelMonitorListener aiModelMonitorListener;
 
     private String baseUrl;
 
@@ -29,23 +34,20 @@ public class RoutingAiModelConfig {
 
     private Boolean logResponses = false;
 
-    private Integer timeoutSeconds = 60;
+    private Integer timeoutSeconds = 180;
 
-    /**
-     * 创建用于路由判断的ChatModel
-     */
     @Bean
-    @Scope("prototype")
-    public ChatModel routingChatModelPrototype() {
+    public ChatModel agenticChatModel() {
         return OpenAiChatModel.builder()
                 .apiKey(apiKey)
-                .modelName(modelName)
                 .baseUrl(baseUrl)
+                .modelName(modelName)
                 .maxTokens(maxTokens)
                 .temperature(temperature)
                 .logRequests(logRequests)
                 .logResponses(logResponses)
                 .timeout(Duration.ofSeconds(timeoutSeconds))
+                .listeners(List.of(aiModelMonitorListener))
                 .build();
     }
 }
