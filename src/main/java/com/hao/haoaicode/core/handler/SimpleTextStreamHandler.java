@@ -1,5 +1,6 @@
 package com.hao.haoaicode.core.handler;
 
+import cn.hutool.json.JSONUtil;
 import com.hao.haoaicode.buffer.ChatMessageRouter;
 import com.hao.haoaicode.core.CodeParser;
 import com.hao.haoaicode.model.entity.User;
@@ -14,6 +15,8 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
+
+import java.util.Map;
 
 /**
  * 简单文本流处理器
@@ -46,7 +49,7 @@ public class SimpleTextStreamHandler {
                 .map(chunk -> {
                     // 收集AI响应内容
                     aiResponseBuilder.append(chunk);
-                    return chunk;
+                    return JSONUtil.toJsonStr(Map.of("type", "ai_response", "data", chunk));
                 })
                 .doOnComplete(() -> {
                     // 1. 流式响应完成后，添加AI消息到对话历史

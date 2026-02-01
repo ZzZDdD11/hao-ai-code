@@ -67,7 +67,7 @@ public class VueProjectBuilder {
      */
     private boolean executeNpmInstall(File projectDir) {
         log.info("执行 npm install...");
-        String command = String.format("%s install", buildCommand("npm"));
+        String command = String.format("%s install --registry=https://registry.npmmirror.com", buildCommand("npm"));
         return executeCommand(projectDir, command, 300); // 5分钟超时
     }
 
@@ -98,6 +98,7 @@ public class VueProjectBuilder {
      * @return 是否构建成功
      */
     public boolean buildProject(String projectPath) {
+        long start = System.currentTimeMillis();
         File projectDir = new File(projectPath);
         if (!projectDir.exists() || !projectDir.isDirectory()) {
             log.error("项目目录不存在: {}", projectPath);
@@ -111,22 +112,28 @@ public class VueProjectBuilder {
         }
         log.info("开始构建 Vue 项目: {}", projectPath);
         // 执行 npm install
+        long installStart = System.currentTimeMillis();
         if (!executeNpmInstall(projectDir)) {
-            log.error("npm install 执行失败");
+            log.error("npm install 执行失败, 耗时: {}ms", System.currentTimeMillis() - installStart);
             return false;
         }
+        log.info("npm install 成功, 耗时: {}ms", System.currentTimeMillis() - installStart);
+
         // 执行 npm run build
+        long buildStart = System.currentTimeMillis();
         if (!executeNpmBuild(projectDir)) {
-            log.error("npm run build 执行失败");
+            log.error("npm run build 执行失败, 耗时: {}ms", System.currentTimeMillis() - buildStart);
             return false;
         }
+        log.info("npm run build 成功, 耗时: {}ms", System.currentTimeMillis() - buildStart);
+
         // 验证 dist 目录是否生成
         File distDir = new File(projectDir, "dist");
         if (!distDir.exists()) {
             log.error("构建完成但 dist 目录未生成: {}", distDir.getAbsolutePath());
             return false;
         }
-        log.info("Vue 项目构建成功，dist 目录: {}", distDir.getAbsolutePath());
+        log.info("Vue 项目构建成功，dist 目录: {}, 总耗时: {}ms", distDir.getAbsolutePath(), System.currentTimeMillis() - start);
         return true;
     }
 

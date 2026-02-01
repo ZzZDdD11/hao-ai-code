@@ -1,5 +1,6 @@
-package com.hao.haoaicode.review;
+package com.hao.haoaicode;
 
+import com.hao.haoaicode.review.RagEnhancementService;
 import com.hao.haoaicode.review.model.RagResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Test;

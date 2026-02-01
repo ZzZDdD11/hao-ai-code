@@ -33,6 +33,9 @@ public class ToolManager {
     @PostConstruct
     public void initTools() {
         for (BaseTool tool : tools) {
+            if ("writeBatchFiles".equals(tool.getToolName())) {
+                continue;
+            }
             toolMap.put(tool.getToolName(), tool);
             log.info("注册工具: {} -> {}", tool.getToolName(), tool.getDisplayName());
         }
@@ -55,6 +58,6 @@ public class ToolManager {
      * @return 工具实例集合
      */
     public BaseTool[] getAllTools() {
-        return tools;
+        return toolMap.values().toArray(new BaseTool[0]);
     }
 }

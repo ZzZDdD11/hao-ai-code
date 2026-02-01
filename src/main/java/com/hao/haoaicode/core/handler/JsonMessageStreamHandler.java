@@ -21,6 +21,7 @@ import reactor.core.publisher.Flux;
 
 import java.io.File;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -64,23 +65,23 @@ public class JsonMessageStreamHandler {
 
             tokenStream.onPartialResponse((String partialResponse) -> {
                         if (sink.isCancelled()) return;
-                        
-                        // 1. 发送给前端
-                        sink.next(partialResponse);
-                        
+
+                        // 1. 发送给前端（包装为JSON）
+                        String jsonResponse = JSONUtil.toJsonStr(Map.of("type", "ai_response", "data", partialResponse));
+                        sink.next(jsonResponse);
+
                         // 2. 收集历史记录
                         chatHistoryStringBuilder.append(partialResponse);
                     })
                     .beforeToolExecution((beforeToolExecutionHandler) -> {
                         if (sink.isCancelled()) return;
-
-                            String toolId = beforeToolExecutionHandler.request().id(); 
+                            String toolId = beforeToolExecutionHandler.request().id();
                             // 如果工具是第一次出现，添加说明
                             if (toolId != null && !seenToolIds.contains(toolId)) {
                                 seenToolIds.add(toolId);
                                 String marker = "\n\n[选择工具] 写入文件\n\n";
                                 chatHistoryStringBuilder.append(marker);
-                                sink.next(marker);  // 发给前端作为一段说明
+                                sink.next(JSONUtil.toJsonStr(Map.of("type", "ai_response", "data", marker)));  // 发给前端作为一段说明
                             }
                     })
                     .onToolExecuted((ToolExecution toolExecution) -> {
@@ -90,8 +91,31 @@ public class JsonMessageStreamHandler {
                         String result = formatToolExecutionResult(toolExecutedMessage);  // 里边解析 relativeFilePath & content
                         String output = "\n\n" + result + "\n\n";
 
+                        // 1. 完整记录到历史（保证上下文完整）
                         chatHistoryStringBuilder.append(output);
-                        sink.next(output);  // 直接把 Markdown 文本推给前端
+
+                        // 2. 尝试解析并发送结构化数据给前端
+                        try {
+                            JSONObject jsonObject = JSONUtil.parseObj(toolExecutedMessage.getArguments());
+                            String relativeFilePath = jsonObject.getStr("relativeFilePath");
+                            String content = jsonObject.getStr("content");
+                            
+                            // 发送文件数据事件
+                            Map<String, Object> fileData = Map.of(
+                                "filePath", relativeFilePath,
+                                "content", content
+                            );
+                            sink.next(JSONUtil.toJsonStr(Map.of("type", "file_generated", "data", JSONUtil.toJsonStr(fileData))));
+                            
+                            // 发送简短的提示消息到聊天界面
+                            String simpleMsg = "\n> 已生成文件: `" + relativeFilePath + "`\n";
+                            sink.next(JSONUtil.toJsonStr(Map.of("type", "ai_response", "data", simpleMsg)));
+                            
+                        } catch (Exception e) {
+                            // 解析失败，回退到发送完整文本
+                            log.error("解析工具参数失败", e);
+                            sink.next(JSONUtil.toJsonStr(Map.of("type", "ai_response", "data", output)));
+                        }
                     })
                     .onCompleteResponse((ChatResponse response) -> {
                         if (sink.isCancelled()) {

@@ -22,4 +22,21 @@ public class ThreadPoolConfig {
         executor.initialize();
         return executor;
     }
+
+    @Bean("taskExecutor")
+    public Executor taskExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        // 核心线程数
+        executor.setCorePoolSize(10);
+        // 最大线程数
+        executor.setMaxPoolSize(20);
+        // 队列容量
+        executor.setQueueCapacity(200);
+        // 线程名前缀
+        executor.setThreadNamePrefix("Async-Executor-");
+        // 拒绝策略
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.initialize();
+        return executor;
+    }
 }
