@@ -1,9 +1,16 @@
 package com.hao.haoaicode.controller;
 
 
+import com.hao.haoaicode.config.CosClientConfig;
+import com.qcloud.cos.COSClient;
+import com.qcloud.cos.exception.CosServiceException;
+import com.qcloud.cos.model.COSObject;
+import com.qcloud.cos.model.ObjectMetadata;
+import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
-import org.springframework.core.io.Resource;
+import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -24,40 +31,63 @@ public class StaticResourceController {
     // 应用生成根目录（用于浏览）
     private static final String PREVIEW_ROOT_DIR = CODE_OUTPUT_ROOT_DIR;
 
+    @Value("${code.deploy-cos-prefix:/deploy}")
+    private String deployCosPrefix;
+
+    @Resource
+    private CosClientConfig cosClientConfig;
+
+    @Resource
+    private COSClient cosClient;
+
     /**
      * 提供静态资源访问，支持目录重定向
      * 访问格式：http://localhost:8123/api/static/{deployKey}[/{fileName}]
      */
     @GetMapping("/{deployKey}/**")
-    public ResponseEntity<Resource> serveStaticResource(
+    public ResponseEntity<org.springframework.core.io.Resource> serveStaticResource(
             @PathVariable String deployKey,
             HttpServletRequest request) {
         try {
-            // 获取资源路径
             String resourcePath = (String) request.getAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE);
             resourcePath = resourcePath.substring(("/static/" + deployKey).length());
-            // 如果是目录访问（不带斜杠），重定向到带斜杠的URL
             if (resourcePath.isEmpty()) {
                 HttpHeaders headers = new HttpHeaders();
                 headers.add("Location", request.getRequestURI() + "/");
                 return new ResponseEntity<>(headers, HttpStatus.MOVED_PERMANENTLY);
             }
-            // 默认返回 index.html
             if (resourcePath.equals("/")) {
                 resourcePath = "/index.html";
             }
-            // 构建文件路径
             String filePath = PREVIEW_ROOT_DIR + "/" + deployKey + resourcePath;
             File file = new File(filePath);
-            // 检查文件是否存在
-            if (!file.exists()) {
+            if (file.exists()) {
+                org.springframework.core.io.Resource resource = new FileSystemResource(file);
+                return ResponseEntity.ok()
+                        .header("Content-Type", getContentTypeWithCharset(filePath))
+                        .body(resource);
+            }
+
+            String objectKey = buildCosObjectKey(deployKey, resourcePath);
+            COSObject cosObject = cosClient.getObject(cosClientConfig.getBucket(), objectKey);
+            ObjectMetadata metadata = cosObject.getObjectMetadata();
+            InputStreamResource resource = new InputStreamResource(cosObject.getObjectContent());
+            HttpHeaders headers = new HttpHeaders();
+            String contentType = metadata == null ? null : metadata.getContentType();
+            if (contentType == null || contentType.isBlank()) {
+                contentType = getContentTypeWithCharset(objectKey);
+            }
+            headers.add("Content-Type", contentType);
+            long contentLength = metadata == null ? -1 : metadata.getContentLength();
+            if (contentLength >= 0) {
+                headers.setContentLength(contentLength);
+            }
+            return new ResponseEntity<>(resource, headers, HttpStatus.OK);
+        } catch (CosServiceException e) {
+            if (e.getStatusCode() == 404) {
                 return ResponseEntity.notFound().build();
             }
-            // 返回文件资源
-            Resource resource = (Resource) new FileSystemResource(file);
-            return ResponseEntity.ok()
-                    .header("Content-Type", getContentTypeWithCharset(filePath))
-                    .body(resource);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
@@ -73,5 +103,28 @@ public class StaticResourceController {
         if (filePath.endsWith(".png")) return "image/png";
         if (filePath.endsWith(".jpg")) return "image/jpeg";
         return "application/octet-stream";
+    }
+
+    private String buildCosObjectKey(String deployKey, String resourcePath) {
+        String prefix = normalizeDirKey(deployCosPrefix) + (deployKey == null ? "" : deployKey.trim()) + "/";
+        String path = resourcePath == null ? "" : resourcePath.replace('\\', '/');
+        while (path.startsWith("/")) {
+            path = path.substring(1);
+        }
+        return prefix + path;
+    }
+
+    private String normalizeDirKey(String key) {
+        if (key == null || key.isBlank()) {
+            return "";
+        }
+        String k = key.trim().replace('\\', '/');
+        while (k.startsWith("/")) {
+            k = k.substring(1);
+        }
+        while (k.endsWith("/")) {
+            k = k.substring(0, k.length() - 1);
+        }
+        return k + "/";
     }
 }

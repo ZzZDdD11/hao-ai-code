@@ -16,6 +16,7 @@ import com.hao.haoaicode.core.handler.StreamHandlerExecutor;
 import com.hao.haoaicode.exception.BusinessException;
 import com.hao.haoaicode.exception.ErrorCode;
 import com.hao.haoaicode.exception.ThrowUtils;
+import com.hao.haoaicode.manager.CosManager;
 import com.hao.haoaicode.mapper.AppMapper;
 import com.hao.haoaicode.model.dto.app.AppAddRequest;
 import com.hao.haoaicode.model.dto.app.AppQueryRequest;
@@ -89,7 +90,12 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     @Resource
     private RagEnhancementService ragEnhancementService;
     @Autowired
-    private StringRedisTemplate stringRedisTemplate;  // 如果还没有
+    private StringRedisTemplate stringRedisTemplate;
+    @Resource
+    private CosManager cosManager;
+
+    @Value("${code.deploy-cos-prefix:/deploy}")
+    private String deployCosPrefix;
 
 
     /**
@@ -185,53 +191,80 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         if (!app.getUserId().equals(loginUser.getId())) {
             throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "无权限部署该应用");
         }
-        // 4. 检查是否已有 deployKey
+        // 4. 生成 deployKey
+        // 注意：COS 覆盖写同名对象（同一路径）在短时间内可能读到旧版本（表现为首次打开下载、第二次正常）。
+        // 因此对 VUE_PROJECT 每次部署都生成新的 deployKey，避免覆盖写。
         String deployKey = app.getDeployKey();
-        // 没有则生成 6 位 deployKey（大小写字母 + 数字）
-        if (StrUtil.isBlank(deployKey)) {
-            deployKey = RandomUtil.randomString(6);
-        }
+
         // 5. 获取代码生成类型，构建源目录路径
         String codeGenType = app.getCodeGenType();
         String sourceDirName = codeGenType + "_" + appId;
         String sourceDirPath = AppConstant.CODE_OUTPUT_ROOT_DIR + File.separator + sourceDirName;
-// 6. 检查源目录是否存在
         File sourceDir = new File(sourceDirPath);
         if (!sourceDir.exists() || !sourceDir.isDirectory()) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "应用代码不存在，请先生成代码");
         }
-// 7. Vue 项目特殊处理：执行构建
+
         CodeGenTypeEnum codeGenTypeEnum = CodeGenTypeEnum.getEnumByValue(codeGenType);
         if (codeGenTypeEnum == CodeGenTypeEnum.VUE_PROJECT) {
-            // Vue 项目需要构建
+            deployKey = RandomUtil.randomString(8);
+        } else if (StrUtil.isBlank(deployKey)) {
+            deployKey = RandomUtil.randomString(6);
+        }
+        if (codeGenTypeEnum == CodeGenTypeEnum.VUE_PROJECT) {
             boolean buildSuccess = vueProjectBuilder.buildProject(sourceDirPath);
-            ThrowUtils.throwIf(!buildSuccess, ErrorCode.SYSTEM_ERROR, "Vue 项目构建失败，请检查代码和依赖");
-            // 检查 dist 目录是否存在
+            if (!buildSuccess) {
+                String detail = vueProjectBuilder.getLastError();
+                if (StrUtil.isNotBlank(detail)) {
+                    int maxLen = 4000;
+                    if (detail.length() > maxLen) {
+                        detail = detail.substring(0, maxLen) + "\n...(truncated)";
+                    }
+                    throw new BusinessException(ErrorCode.SYSTEM_ERROR, "Vue 项目构建失败，请检查代码和依赖\n\n" + detail);
+                }
+                throw new BusinessException(ErrorCode.SYSTEM_ERROR, "Vue 项目构建失败，请检查代码和依赖");
+            }
+
             File distDir = new File(sourceDirPath, "dist");
             ThrowUtils.throwIf(!distDir.exists(), ErrorCode.SYSTEM_ERROR, "Vue 项目构建完成但未生成 dist 目录");
-            // 将 dist 目录作为部署源
-            sourceDir = distDir;
-            log.info("Vue 项目构建成功，将部署 dist 目录: {}", distDir.getAbsolutePath());
-        }
-// 8. 复制文件到部署目录
-        String deployDirPath = AppConstant.CODE_DEPLOY_ROOT_DIR + File.separator + deployKey;
+            File indexHtml = new File(distDir, "index.html");
+            ThrowUtils.throwIf(!indexHtml.exists(), ErrorCode.SYSTEM_ERROR, "Vue 项目构建完成但未生成 index.html");
 
+            String deployDirKey = normalizeCosDirKey(deployCosPrefix) + deployKey + "/";
+            boolean uploaded = cosManager.uploadDirectory(deployDirKey, distDir);
+            ThrowUtils.throwIf(!uploaded, ErrorCode.SYSTEM_ERROR, "上传 dist 到 COS 失败");
+
+            String indexKey = deployDirKey + "index.html";
+            boolean indexUploaded = cosManager.uploadFileWithContentType(indexKey, indexHtml, "text/html; charset=utf-8");
+            ThrowUtils.throwIf(!indexUploaded, ErrorCode.SYSTEM_ERROR, "上传 index.html 到 COS 失败");
+
+            App updateApp = new App();
+            updateApp.setId(appId);
+            updateApp.setDeployKey(deployKey);
+            updateApp.setDeployedTime(LocalDateTime.now());
+            boolean updateResult = this.updateById(updateApp);
+            ThrowUtils.throwIf(!updateResult, ErrorCode.OPERATION_ERROR, "更新应用部署信息失败");
+
+            String appDeployUrl = "/static/" + deployKey + "/index.html";
+            //generateAppScreenshotAsync(appId, appDeployUrl);
+            return appDeployUrl;
+        }
+
+        String deployDirPath = AppConstant.CODE_DEPLOY_ROOT_DIR + File.separator + deployKey;
         try {
             FileUtil.copyContent(sourceDir, new File(deployDirPath), true);
         } catch (Exception e) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "部署失败：" + e.getMessage());
         }
-        // 8. 更新应用的 deployKey 和部署时间
+
         App updateApp = new App();
         updateApp.setId(appId);
         updateApp.setDeployKey(deployKey);
         updateApp.setDeployedTime(LocalDateTime.now());
         boolean updateResult = this.updateById(updateApp);
         ThrowUtils.throwIf(!updateResult, ErrorCode.OPERATION_ERROR, "更新应用部署信息失败");
-        // 9. 返回可访问的 URL
-        // 10. 构建应用访问 URL
+
         String appDeployUrl = String.format("%s/%s/", deployHost, deployKey);
-        // 11. 异步生成截图并更新应用封面
         generateAppScreenshotAsync(appId, appDeployUrl);
         return appDeployUrl;
 
@@ -377,6 +410,20 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         });
     }
 
+    private String normalizeCosDirKey(String key) {
+        if (key == null || key.isBlank()) {
+            return "";
+        }
+        String k = key.trim().replace('\\', '/');
+        while (k.startsWith("/")) {
+            k = k.substring(1);
+        }
+        while (k.endsWith("/")) {
+            k = k.substring(0, k.length() - 1);
+        }
+        return k + "/";
+    }
+
     @Override
     public Long createApp(AppAddRequest appAddRequest, User loginUser) {
         // 参数校验
@@ -399,7 +446,6 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         return app.getId();
     }
 
-        /**
     /**
      * 从文件系统获取生成的代码
      * 

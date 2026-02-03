@@ -69,17 +69,17 @@ public class AiCodeGeneratorServiceFactory {
                 return MessageWindowChatMemory.builder()
                     .id(memoryId)
                     .chatMemoryStore(chatMemoryStore)
-                    .maxMessages(20)
+                    .maxMessages(10)
                     .build();
             })
-            .tools(toolManager.getAllTools())
+            //.tools(toolManager.getAllTools())
             .inputGuardrails(new PromptSafetyInputGuardrail())
-            .hallucinatedToolNameStrategy(toolExecutionRequest -> 
-                ToolExecutionResultMessage.from(
-                    toolExecutionRequest, 
-                    "Error: there is no tool called " + toolExecutionRequest.name()
-                )
-            )
+            // .hallucinatedToolNameStrategy(toolExecutionRequest -> 
+            //     ToolExecutionResultMessage.from(
+            //         toolExecutionRequest, 
+            //         "Error: there is no tool called " + toolExecutionRequest.name()
+            //     )
+            // )
             .build();
     }
 

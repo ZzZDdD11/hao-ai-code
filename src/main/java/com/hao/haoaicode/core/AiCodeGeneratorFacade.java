@@ -45,8 +45,6 @@ public class AiCodeGeneratorFacade {
 
     @Resource
     private VuePlanningService vuePlanningService;
-    @Resource
-    private com.hao.haoaicode.core.builder.VueStaticSkeletonBuilder vueStaticSkeletonBuilder;
 
     /**
      * 构建会话 ID
@@ -178,51 +176,8 @@ public class AiCodeGeneratorFacade {
                 yield streamHandlerExecutor.executeTextStream(codeStream, appId, loginUser, CodeGenTypeEnum.MULTI_FILE);
             }
             case VUE_PROJECT -> {
-                // 1. 优化：不再使用 LLM 生成规划和骨架，而是直接生成静态骨架
-                // VuePlanContext planContext = vuePlanningService.plan(userMessage);
-
-                // 2. 生成静态骨架
-                // 注意：这里需要知道保存路径，但 Facade 层通常不直接处理文件路径细节（由 Service/Saver 处理）
-                // 这里的逻辑稍微 tricky，因为 generateVueProjectCodeStream 是流式的，
-                // 而静态骨架生成是同步的。为了保持一致性，我们可以在这里先生成骨架。
-                // 但是！Service 层的 generateVueProjectCodeStream 期望的是 TokenStream。
-                // 实际上，CodeFileSaverExecutor 会在最后把生成的文件写入磁盘。
-                // 但是 VUE_PROJECT 比较特殊，它需要先有骨架，再在上面改。
-
-                // 让我们看下原有的逻辑：
-                // 1. generateVueSkeletonStream -> 生成骨架代码流 -> streamHandlerExecutor 保存骨架
-                // 2. generateVueProjectCodeStream -> 生成业务代码流 -> streamHandlerExecutor 保存业务代码
-
-                // 现在我们要把第1步替换为静态生成。
-                // 我们可以直接调用 vueStaticSkeletonBuilder 生成到临时目录？
-                // 不行，因为 appId 对应的目录是在 Saver 里决定的。
-
-                // 方案调整：
-                // 我们依然保持两阶段流，但是第一阶段我们伪造一个“骨架生成完成”的流，
-                // 并且在流的执行过程中（或者执行前）真正去写文件。
-                // 但是写文件需要 appId，这里有 appId。
-                // 目标目录是 AppConstant.CODE_OUTPUT_ROOT_DIR + File.separator + "vue_project_" + appId;
-
-                String projectPath = com.hao.haoaicode.constant.AppConstant.CODE_OUTPUT_ROOT_DIR + File.separator + "vue_project_" + appId;
-                vueStaticSkeletonBuilder.generateSkeleton(projectPath);
-
-                // 3. 构造提示词，告诉 LLM 骨架已就绪
-                String projectUserMessage = "【阶段说明】项目骨架（Vue3+Vite+Router+AntDesignVue）已经生成完毕。请根据用户需求，在现有骨架基础上补充具体的页面代码和业务逻辑。\n" +
-                        "【用户需求】\n" + userMessage + "\n\n" +
-                        "【注意】\n" +
-                        "- 不要重新生成 package.json, vite.config.js, main.js 等基础配置文件，除非需要添加特定依赖。\n" +
-                        "- 重点生成 views/ 下的页面组件和 router/index.js 的路由配置。\n";
-
-                TokenStream projectStream = service.generateVueProjectCodeStream(sessionId, projectUserMessage);
-                Flux<String> projectFlux = streamHandlerExecutor.executeTokenStream(projectStream, appId, loginUser);
-
-                Flux<String> combinedFlux = Flux.concat(
-                        Flux.just(JSONUtil.toJsonStr(Map.of("type", "ai_response", "data", "【优化模式】已跳过耗时的规划阶段，直接使用标准高性能模板生成项目骨架...\n"))),
-                        Flux.just(JSONUtil.toJsonStr(Map.of("type", "ai_response", "data", "【Vue 骨架阶段】标准骨架生成完毕。\n"))),
-                        Flux.just(JSONUtil.toJsonStr(Map.of("type", "ai_response", "data", "【业务生成阶段】AI 正在根据您的需求编写业务代码...\n"))),
-                        projectFlux
-                );
-                yield combinedFlux;
+                TokenStream projectStream = service.generateVueProjectCodeStream(sessionId, userMessage);
+                yield streamHandlerExecutor.executeTokenStream(projectStream, appId, loginUser);
             }
             default -> {
                 String errorMessage = "不支持的生成类型：" + codeGenTypeEnum.getValue();

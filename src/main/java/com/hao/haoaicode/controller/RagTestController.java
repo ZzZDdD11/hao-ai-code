@@ -4,6 +4,7 @@ import com.hao.haoaicode.common.BaseResponse;
 import com.hao.haoaicode.common.ResultUtils;
 import com.hao.haoaicode.exception.ErrorCode;
 import com.hao.haoaicode.exception.ThrowUtils;
+import com.hao.haoaicode.manager.CosManager;
 import com.hao.haoaicode.review.RagEnhancementService;
 import com.hao.haoaicode.review.model.RagResponse;
 import jakarta.annotation.Resource;
@@ -24,6 +25,9 @@ public class RagTestController {
     
     @Resource
     private RagEnhancementService ragEnhancementService;
+
+    @Resource
+    private CosManager cosManager;
     
     /**
      * 测试 RAG 检索功能
@@ -67,11 +71,22 @@ public class RagTestController {
     public BaseResponse<String> testSecurityDocs(
             @RequestParam(defaultValue = "html") String codeType) {
         log.info("收到安全文档检索请求，codeType: {}", codeType);
-        
-        // 调用 RAG 服务检索安全文档
+
         String docs = ragEnhancementService.retrieveSecurityDocs(codeType);
-        
+
         log.info("检索到文档长度: {}", docs.length());
         return ResultUtils.success(docs);
+    }
+
+    /**
+     * COS 连通性测试（写入一个小对象）
+     * 示例：GET /api/rag/cos/ping
+     */
+    @GetMapping("/cos/ping")
+    public BaseResponse<String> pingCos() {
+        String key = "connectivity-test/ping-" + System.currentTimeMillis() + ".txt";
+        boolean ok = cosManager.uploadTextFile(key, "ping", "text/plain; charset=UTF-8");
+        ThrowUtils.throwIf(!ok, ErrorCode.SYSTEM_ERROR, "COS ping failed");
+        return ResultUtils.success(key);
     }
 }

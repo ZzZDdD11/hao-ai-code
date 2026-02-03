@@ -282,6 +282,19 @@ public class AppController {
         User loginUser = userService.getLoginUser(request);
         // 调用服务部署应用
         String deployUrl = appService.deployApp(appId, loginUser);
+        if (deployUrl != null && deployUrl.startsWith("/")) {
+            String scheme = request.getScheme();
+            String host = request.getServerName();
+            int port = request.getServerPort();
+            boolean defaultPort = ("http".equalsIgnoreCase(scheme) && port == 80)
+                    || ("https".equalsIgnoreCase(scheme) && port == 443);
+            String base = scheme + "://" + host + (defaultPort ? "" : ":" + port);
+            String contextPath = request.getContextPath();
+            if (contextPath != null && !contextPath.isEmpty()) {
+                base = base + contextPath;
+            }
+            deployUrl = base + deployUrl;
+        }
         return ResultUtils.success(deployUrl);
     }
 

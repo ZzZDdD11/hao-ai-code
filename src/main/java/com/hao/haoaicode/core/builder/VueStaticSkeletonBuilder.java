@@ -6,6 +6,9 @@ import org.springframework.stereotype.Component;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * 静态 Vue 项目骨架生成器
@@ -172,5 +175,93 @@ public class VueStaticSkeletonBuilder {
         FileUtil.writeString(homeView, new File(viewsPath, "HomeView.vue"), StandardCharsets.UTF_8);
 
         log.info("静态 Vue 骨架生成完成");
+    }
+
+    public Map<String, String> buildSkeletonFiles() {
+        Map<String, String> files = new LinkedHashMap<>();
+
+        files.put("package.json", """
+                {"name":"vue-project","version":"0.0.0","private":true,"type":"module","scripts":{"dev":"vite","build":"vite build","preview":"vite preview"},"dependencies":{"vue":"^3.3.4","vue-router":"^4.2.4","ant-design-vue":"^4.0.0","axios":"^1.6.0"},"devDependencies":{"@vitejs/plugin-vue":"^4.2.3","vite":"^4.4.5"}}
+                """);
+
+        files.put("vite.config.js", """
+                import { defineConfig } from 'vite'
+                import vue from '@vitejs/plugin-vue'
+                import { fileURLToPath, URL } from 'node:url'
+
+                export default defineConfig({
+                  plugins: [vue()],
+                  resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
+                  base: './',
+                  server: { host: '0.0.0.0' }
+                })
+                """);
+
+        files.put("index.html", """
+                <!DOCTYPE html>
+                <html lang="en">
+                  <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Vue App</title>
+                  </head>
+                  <body>
+                    <div id="app"></div>
+                    <script type="module" src="/src/main.js"></script>
+                  </body>
+                </html>
+                """);
+
+        files.put("src/main.js", """
+                import { createApp } from 'vue'
+                import App from './App.vue'
+                import router from './router'
+                import Antd from 'ant-design-vue'
+                import 'ant-design-vue/dist/reset.css'
+
+                const app = createApp(App)
+                app.use(router)
+                app.use(Antd)
+                app.mount('#app')
+                """);
+
+        files.put("src/App.vue", """
+                <script setup>
+                import { RouterView } from 'vue-router'
+                </script>
+
+                <template>
+                  <RouterView />
+                </template>
+
+                <style>
+                #app { width: 100%; height: 100vh; }
+                </style>
+                """);
+
+        files.put("src/router/index.js", """
+                import { createRouter, createWebHashHistory } from 'vue-router'
+
+                const router = createRouter({
+                  history: createWebHashHistory(),
+                  routes: [
+                    { path: '/', redirect: '/home' },
+                    { path: '/home', name: 'home', component: () => import('../views/HomeView.vue') }
+                  ]
+                })
+
+                export default router
+                """);
+
+        files.put("src/views/HomeView.vue", """
+                <template>
+                  <div style="padding: 20px; text-align: center;">
+                    <h1>欢迎使用 AI 代码生成器</h1>
+                    <p>项目骨架已生成，AI 正在为您编写业务代码...</p>
+                  </div>
+                </template>
+                """);
+
+        return Collections.unmodifiableMap(files);
     }
 }
