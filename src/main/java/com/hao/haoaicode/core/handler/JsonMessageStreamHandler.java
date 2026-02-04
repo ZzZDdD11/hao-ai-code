@@ -3,6 +3,9 @@ package com.hao.haoaicode.core.handler;
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
+
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.hao.haoaicode.ai.model.message.ToolExecutedMessage;
 import com.hao.haoaicode.buffer.ChatMessageRouter;
 import com.hao.haoaicode.constant.AppConstant;
@@ -24,6 +27,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * JSON 消息流处理器
@@ -53,16 +57,21 @@ public class JsonMessageStreamHandler {
     private static final String FILE_MARKER_SUFFIX = ">>>";
     private static final String END_FILE_MARKER = "<<<END_FILE>>>";
     private static final String DONE_MARKER = "<<<DONE>>>";
-    // 应用ID到生成的文件的映射
-    private static final ConcurrentHashMap<Long, Map<String, String>> APP_ID_TO_FILES = new ConcurrentHashMap<>();
+    // 应用ID到生成的文件的映射，用于内存存储VUE项目
+    private static final Cache<Long, Map<String, String>> APP_ID_TO_FILES = Caffeine.newBuilder()
+            .expireAfterWrite(10, TimeUnit.MINUTES)
+            .maximumSize(1000)
+            .build();
 
-
+    // 获取应用ID对应的所有生成文件
     public static Map<String, String> getGeneratedFiles(long appId) {
-        return APP_ID_TO_FILES.getOrDefault(appId, Collections.emptyMap());
+        Map<String, String> files = APP_ID_TO_FILES.getIfPresent(appId);
+        return files != null ? files : Collections.emptyMap();
     }
-
+    // 清除应用ID对应的所有文件
     public static void clearGeneratedFiles(long appId) {
-        APP_ID_TO_FILES.remove(appId);
+
+        APP_ID_TO_FILES.invalidate(appId);
     }
 
     /**
@@ -77,6 +86,13 @@ public class JsonMessageStreamHandler {
     public Flux<String> handle(TokenStream tokenStream, long appId, User loginUser) {
         // 收集数据
         StringBuilder chatHistoryStringBuilder = new StringBuilder();
+        StringBuilder displayBuffer = new StringBuilder();
+        // 用来记住“已经发给前端的干净内容长度”，
+        // 因为现在我们对 累积缓冲 做清洗，每次清洗都会得到一份“完整的干净文本”。如果不做截断，前端会收到 重复内容 。
+        // 所以 lastSentLen 的作用是：
+        //- 记录上一次已经发送到前端的字符数
+        //- 本次只把新增的那一段发出去（ displayResponse.substring(lastSentLen) ）
+        int[] lastSentLen = new int[]{0};
         // 用于跟踪已经见过的工具ID，判断是否是第一次调用
         // Set<String> seenToolIds = new HashSet<>();
         long generationStartNs = System.nanoTime();
@@ -90,14 +106,24 @@ public class JsonMessageStreamHandler {
             tokenStream.onPartialResponse((String partialResponse) -> {
                         if (sink.isCancelled()) return;
 
-                        // 1. 发送给前端（包装为JSON）
-                        String jsonResponse = JSONUtil.toJsonStr(Map.of("type", "ai_response", "data", partialResponse));
-                        sink.next(jsonResponse);
-
-                        // 2. 收集历史记录
+                        displayBuffer.append(partialResponse);
+                        String displayResponse = displayBuffer.toString()
+                                .replaceAll("(?s)<<<FILE:.*?>>>", "")
+                                .replaceAll("<<<END_FILE>>>", "")
+                                .replaceAll("<<<DONE>>>", "");
+                        if (displayResponse.length() > lastSentLen[0]) {
+                            String delta = displayResponse.substring(lastSentLen[0]);
+                            lastSentLen[0] = displayResponse.length();
+                            String jsonResponse = JSONUtil.toJsonStr(
+                                Map.of("type", "ai_response", "data", delta)
+                            );
+                            sink.next(jsonResponse);
+                        }
                         chatHistoryStringBuilder.append(partialResponse);
                     })
+                    // 大模型流式输出结束后的收尾逻辑（只会调用一次）
                     .onCompleteResponse((ChatResponse response) -> {
+                        // 如果前端已经取消订阅（例如用户中途终止），则不再进行后续构建/上传等操作
                         if (sink.isCancelled()) {
                             log.info("已取消，跳过 Vue 项目构建");
                             return;
@@ -105,39 +131,49 @@ public class JsonMessageStreamHandler {
                         
                         /*
                         // 3. 触发 Vue 项目构建 
+                        // 早期版本：直接在本地某个目录构建一个 Vue 项目
                         String projectPath = AppConstant.CODE_OUTPUT_ROOT_DIR + File.separator + "vue_project_" + appId;
                         vueProjectBuilder.buildProjectAsync(projectPath);
                         */
-
+                        // 完整的 AI 响应（包含所有流式 partialResponse 的累积内容）
                         String aiResponse = chatHistoryStringBuilder.toString();
-
-                        Map<String, String> modelFiles = parseMultiFileProtocol(aiResponse);
+                        // 规定的“多文件协议”格式：
+                        // 1. 每个文件块以 <<<FILE:filename>>> 开头，以 <<<END_FILE>>> 结尾
+                        // 2. 所有文件块结束后，以 <<<DONE>>> 结尾
+                        // 这里根据上述协议解析出多个文件
+                   
+                        // 解析多文件协议，得到模型生成的所有文件：key 为相对路径，value 为文件内容
+                        Map<String, String> modelFiles = parseMultiFileProtocol(aiResponse); // key: 相对路径，value: 文件内容
                         if (modelFiles.isEmpty()) {
-                            APP_ID_TO_FILES.remove(appId);
+                            // 未解析出任何文件：清理缓存，并提示前端检查模型输出格式
+                            APP_ID_TO_FILES.invalidate(appId);
                             sink.next(JSONUtil.toJsonStr(Map.of(
                                     "type", "ai_response",
                                     "data", "\n\n【解析】未识别到任何文件块输出，请检查模型输出格式（<<<FILE:...>>> / <<<END_FILE>>> / <<<DONE>>>）。\n"
                             )));
                         } else {
+                            // 在内存中缓存当前 appId 对应的文件集（只读视图，避免被外部修改）,用于即时预览
                             APP_ID_TO_FILES.put(appId, Collections.unmodifiableMap(modelFiles));
-
-                            boolean wrote = writeVueProjectToDisk(appId, modelFiles);
                             sink.next(JSONUtil.toJsonStr(Map.of(
                                     "type", "ai_response",
-                                    "data", wrote ? "\n\n【落盘】已将生成的 Vue 项目写入本地源码目录。\n" : "\n\n【落盘】写入本地源码目录失败（请查看后端日志）。\n"
+                                    "data", "\n\n【预览】已将生成的 Vue 项目写入内存缓存。可立即预览（30分钟有效）\n"
                             )));
 
+                            // 计算云端源码目录的 baseKey（相当于一个“目录前缀”）
                             String baseKey = buildSourceBaseKey(appId);
+                            // 将所有文本文件批量上传到对象存储（COS）
                             boolean uploaded = cosManager.uploadTextFiles(baseKey, modelFiles);
                             if (uploaded) {
+                                // 规范化目录 key，并写入 Redis，标记当前 appId 最新源码所在的云端目录
                                 String normalizedBaseKey = ensureDirKey(baseKey);
                                 stringRedisTemplate.opsForValue().set(String.format("code:source:latest:%d", appId), normalizedBaseKey);
-                                APP_ID_TO_FILES.remove(appId);
+                                // 上传成功后，文件仍然保留在内存，由Caffeine 负责按过期时间淘汰
                                 sink.next(JSONUtil.toJsonStr(Map.of(
                                         "type", "ai_response",
                                         "data", "\n\n【源码上传】已上传到云端源码目录。\n"
                                 )));
                             } else {
+                                // 上传失败，仅提示前端失败信息，文件仍保留在本地
                                 sink.next(JSONUtil.toJsonStr(Map.of(
                                         "type", "ai_response",
                                         "data", "\n\n【源码上传】上传失败，请稍后重试。\n"
@@ -145,12 +181,14 @@ public class JsonMessageStreamHandler {
                             }
                         }
 
-                        // 存入后端对话历史
+                        // 将完整的 AI 回复存入后端对话历史，用于后续查看和上下文追溯
                         chatMessageRouter.route(appId, aiResponse, ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
 
+                        // 记录本次项目生成的总耗时（从开始到全部完成）
                         long totalDurationMs = (System.nanoTime() - generationStartNs) / 1_000_000;
                         log.info("项目生成总耗时 appId: {}, durationMs: {}", appId, totalDurationMs);
 
+                        // 通知前端：流式推送已经完全结束
                         sink.complete();
                     })
                     .onError((Throwable error) -> {
@@ -235,31 +273,51 @@ public class JsonMessageStreamHandler {
     }
 
     /**
-     * 格式化工具执行结果，用于历史记录展示
+     * 在AI回复的大字符串里，解析出每一个文件的路径和内容”，
+     * 并整理成一个 Map<相对路径, 文件内容>
+     *
+     * 协议大致格式：
+     *   ###FILE: 相对路径###\n
+     *   <文件内容>\n
+     *   ###ENDFILE###
+     * 多个文件依次追加，末尾可能带有 DONE 标记。
      */
     private Map<String, String> parseMultiFileProtocol(String text) {
+        // 判空保护：没有任何内容时，直接返回空 Map，避免后续解析 NPE
         if (text == null || text.isBlank()) {
             return Collections.emptyMap();
         }
+        // DONE_MARKER 作为整体结束标记，只取它之前的内容参与解析
         int doneIndex = text.lastIndexOf(DONE_MARKER);
+        // 若存在 DONE_MARKER，则截取 [0, doneIndex)；否则使用原始文本
         String input = doneIndex >= 0 ? text.substring(0, doneIndex) : text;
-
+        
+        // 使用 LinkedHashMap 保证文件插入顺序，用于历史记录按生成顺序展示
         Map<String, String> files = new LinkedHashMap<>();
+        // idx 为当前扫描起点索引
         int idx = 0;
         while (true) {
+            // 从当前 idx 开始查找下一个文件块的起始标记
             int start = input.indexOf(FILE_MARKER_PREFIX, idx);
             if (start < 0) {
+                // 未找到起始标记，结束整体解析
                 break;
             }
+            // 计算路径起止位置：位于 FILE_MARKER_PREFIX 与 FILE_MARKER_SUFFIX 之间
             int pathStart = start + FILE_MARKER_PREFIX.length();
             int pathEnd = input.indexOf(FILE_MARKER_SUFFIX, pathStart);
             if (pathEnd < 0) {
+                // 缺少路径结束标记，认为协议格式异常，结束解析
                 break;
             }
+            // 原始路径并去掉首尾空白
             String rawPath = input.substring(pathStart, pathEnd).trim();
+            // 归一化相对路径（去掉非法字符、前导分隔符等），非法则返回 null
             String relativePath = normalizeRelativePath(rawPath);
 
+            // 文件内容起点：紧随路径结束标记之后
             int contentStart = pathEnd + FILE_MARKER_SUFFIX.length();
+            // 跳过紧邻的 \r 和 \n，确保内容从新的一行真正开始
             if (contentStart < input.length() && input.charAt(contentStart) == '\r') {
                 contentStart++;
             }
@@ -267,19 +325,25 @@ public class JsonMessageStreamHandler {
                 contentStart++;
             }
 
+            // 查找当前文件块的结束标记
             int end = input.indexOf(END_FILE_MARKER, contentStart);
             if (end < 0) {
+                // 未找到结束标记，认为协议格式已损坏，停止解析
                 break;
             }
+            // 取出文件内容（不包含 END_FILE_MARKER 本身）
             String content = input.substring(contentStart, end);
+            // 去掉末尾多余的换行符，保证文件内容不多一行空白
             if (content.endsWith("\r\n")) {
                 content = content.substring(0, content.length() - 2);
             } else if (content.endsWith("\n")) {
                 content = content.substring(0, content.length() - 1);
             }
+            // 只有在路径合法时才写入 Map，避免非法路径污染文件系统
             if (relativePath != null) {
                 files.put(relativePath, content);
             }
+            // 将扫描指针移动到本次 END_FILE_MARKER 之后，继续寻找下一个文件块
             idx = end + END_FILE_MARKER.length();
         }
         return files;
@@ -327,7 +391,7 @@ public class JsonMessageStreamHandler {
         }
         return k;
     }
-
+    // 将 Vue 项目源码写入本地磁盘
     private boolean writeVueProjectToDisk(long appId, Map<String, String> relativePathToContent) {
         if (relativePathToContent == null || relativePathToContent.isEmpty()) {
             return false;

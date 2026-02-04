@@ -2,8 +2,7 @@ package com.hao.haoaicode.manager;
 
 import com.hao.haoaicode.config.CosClientConfig;
 import com.qcloud.cos.COSClient;
-import com.qcloud.cos.model.PutObjectRequest;
-import com.qcloud.cos.model.PutObjectResult;
+import com.qcloud.cos.model.*;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -12,6 +11,8 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.List;
 import java.util.stream.Stream;
 
 /**
@@ -249,6 +250,54 @@ public class CosManager {
             }
         }
         return true;
+    }
+
+    public boolean downloadDirectory(String baseKey, File localDirectory) {
+        if (localDirectory == null) {
+            log.warn("下载目录到本地失败：localDirectory 为 null, baseKey: {}", baseKey);
+            return false;
+        }
+        String normalizedBaseKey = normalizeKey(baseKey);
+        if (!localDirectory.exists() && !localDirectory.mkdirs()) {
+            log.warn("创建本地目录失败: {}", localDirectory.getAbsolutePath());
+            return false;
+        }
+        try {
+            String maker = null;
+            do {
+                ListObjectsRequest request = new ListObjectsRequest();
+                request.setBucketName(cosClientConfig.getBucket());
+                request.setPrefix(normalizedBaseKey);
+                request.setMarker(maker);
+                ObjectListing listing = cosClient.listObjects(request);
+                List<COSObjectSummary> summaries = listing.getObjectSummaries();
+                for (COSObjectSummary summary : summaries) {
+                    String key = summary.getKey();
+                    if (!key.startsWith(normalizedBaseKey)) {
+                        continue;
+                    }
+                    String relativePath = key.substring(normalizedBaseKey.length());
+                    if (relativePath.isEmpty()) {
+                        continue;
+                    }
+                    File target = new File(localDirectory, relativePath);
+                    File parent = target.getParentFile();
+                    if (parent != null && !parent.exists() && !parent.mkdirs()) {
+                        log.warn("创建本地父目录失败: {}", parent.getAbsolutePath());
+                        return false;
+                    }
+                    COSObject cosObject = cosClient.getObject(cosClientConfig.getBucket(), key);
+                    try (java.io.InputStream in = cosObject.getObjectContent()) {
+                        Files.copy(in, target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                    }
+                }
+                maker = listing.isTruncated() ? listing.getNextMarker() : null;
+            } while (maker != null);
+            return true;
+        } catch (Exception e) {
+            log.error("从COS下载目录失败: baseKey: {}, error: {}", baseKey, e.getMessage(), e);
+            return false;
+        }
     }
 
     private String normalizeObjectKey(String key) {

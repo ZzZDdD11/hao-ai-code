@@ -196,23 +196,31 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         // 因此对 VUE_PROJECT 每次部署都生成新的 deployKey，避免覆盖写。
         String deployKey = app.getDeployKey();
 
-        // 5. 获取代码生成类型，构建源目录路径
+        // 5. 获取代码生成类型
         String codeGenType = app.getCodeGenType();
-        String sourceDirName = codeGenType + "_" + appId;
-        String sourceDirPath = AppConstant.CODE_OUTPUT_ROOT_DIR + File.separator + sourceDirName;
-        File sourceDir = new File(sourceDirPath);
-        if (!sourceDir.exists() || !sourceDir.isDirectory()) {
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "应用代码不存在，请先生成代码");
-        }
-
         CodeGenTypeEnum codeGenTypeEnum = CodeGenTypeEnum.getEnumByValue(codeGenType);
+        ThrowUtils.throwIf(codeGenTypeEnum == null, ErrorCode.SYSTEM_ERROR, "不支持的代码生成类型");
+
         if (codeGenTypeEnum == CodeGenTypeEnum.VUE_PROJECT) {
+            // VUE 项目：从 COS 上的源码目录构建部署版本
+            String normalizedBaseKey = stringRedisTemplate.opsForValue().get(String.format("code:source:latest:%d", appId));
+            if (StrUtil.isBlank(normalizedBaseKey)) {
+                throw new BusinessException(ErrorCode.SYSTEM_ERROR, "应用代码不存在，请先生成代码");
+            }
+
+            // 每次部署生成新的 deployKey，避免 COS 覆盖导致读到旧版本
             deployKey = RandomUtil.randomString(8);
-        } else if (StrUtil.isBlank(deployKey)) {
-            deployKey = RandomUtil.randomString(6);
-        }
-        if (codeGenTypeEnum == CodeGenTypeEnum.VUE_PROJECT) {
-            boolean buildSuccess = vueProjectBuilder.buildProject(sourceDirPath);
+
+            // 创建一个临时目录来存储从 COS 下载下来的源码
+            String tempDirName = "vue_deploy_tmp_" + appId + "_" + System.currentTimeMillis();
+            String tempDirPath = AppConstant.CODE_OUTPUT_ROOT_DIR + File.separator + tempDirName;
+            File tempDir = new File(tempDirPath);
+
+            boolean downloaded = cosManager.downloadDirectory(normalizedBaseKey, tempDir);
+            ThrowUtils.throwIf(!downloaded, ErrorCode.SYSTEM_ERROR, "从 COS 下载源码失败");
+
+            // 以临时目录作为构建输入，生成 dist
+            boolean buildSuccess = vueProjectBuilder.buildProject(tempDirPath);
             if (!buildSuccess) {
                 String detail = vueProjectBuilder.getLastError();
                 if (StrUtil.isNotBlank(detail)) {
@@ -225,7 +233,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
                 throw new BusinessException(ErrorCode.SYSTEM_ERROR, "Vue 项目构建失败，请检查代码和依赖");
             }
 
-            File distDir = new File(sourceDirPath, "dist");
+            File distDir = new File(tempDirPath, "dist");
             ThrowUtils.throwIf(!distDir.exists(), ErrorCode.SYSTEM_ERROR, "Vue 项目构建完成但未生成 dist 目录");
             File indexHtml = new File(distDir, "index.html");
             ThrowUtils.throwIf(!indexHtml.exists(), ErrorCode.SYSTEM_ERROR, "Vue 项目构建完成但未生成 index.html");
@@ -248,6 +256,18 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
             String appDeployUrl = "/static/" + deployKey + "/index.html";
             //generateAppScreenshotAsync(appId, appDeployUrl);
             return appDeployUrl;
+        }
+
+        // 非 VUE_PROJECT 类型：仍然基于本地源码目录部署
+        String sourceDirName = codeGenType + "_" + appId;
+        String sourceDirPath = AppConstant.CODE_OUTPUT_ROOT_DIR + File.separator + sourceDirName;
+        File sourceDir = new File(sourceDirPath);
+        if (!sourceDir.exists() || !sourceDir.isDirectory()) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "应用代码不存在，请先生成代码");
+        }
+
+        if (StrUtil.isBlank(deployKey)) {
+            deployKey = RandomUtil.randomString(6);
         }
 
         String deployDirPath = AppConstant.CODE_DEPLOY_ROOT_DIR + File.separator + deployKey;

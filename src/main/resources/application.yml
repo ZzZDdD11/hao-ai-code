@@ -1,0 +1,198 @@
+spring:
+  application:
+    name: hao-ai-code
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/hao_ai_code
+    username: root
+    password: 123456
+  # redis
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 1
+      timeout: 5000ms
+      ttl: 86400  # 聊天历史 TTL: 24小时（秒）
+      jedis:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 2
+          max-wait: 5000ms
+  session:
+    store-type: redis
+    timeout: 2592000
+server:
+  port: 8123
+  servlet:
+    context-path: /api
+  reactive:
+    session:
+      cookie:
+        max-age: 2592000
+
+knife4j:
+  basic:
+    enable: true
+  setting:
+    language: zh_cn
+
+langchain4j:
+  open-ai:
+    agentic-chat-model:
+      base-url: https://api.deepseek.com
+      api-key: ${DEEPSEEK_API_KEY}
+      model-name: deepseek-chat
+      log-requests: ${LC4J_LOG_REQUESTS:false}
+      log-responses: ${LC4J_LOG_RESPONSES:false}
+      max-tokens: 8192
+      strict-json-schema: true
+      response-format: json_object
+    streaming-chat-model:
+      base-url: https://api.deepseek.com
+      api-key: ${DEEPSEEK_API_KEY}
+      model-name: deepseek-chat
+      log-requests: ${LC4J_LOG_REQUESTS:false}
+      log-responses: ${LC4J_LOG_RESPONSES:false}
+      max-tokens: 8192
+      strict-json-schema: true
+      response-format: json_object
+    reasoning-streaming-chat-model:
+      base-url: https://api.deepseek.com
+      api-key: ${DEEPSEEK_API_KEY}
+      model-name: deepseek-chat
+      log-requests: ${LC4J_LOG_REQUESTS:false}
+      log-responses: ${LC4J_LOG_RESPONSES:false}
+      max-tokens: 8192
+      strict-json-schema: true
+      temperature: 0.1
+      response-format: json_object
+      timeout-seconds: 180  # Tool调用需要更长超时时间
+    routing-chat-model:
+      base-url: https://api.deepseek.com
+      api-key: ${DEEPSEEK_API_KEY}
+      model-name: deepseek-chat
+      log-requests: ${LC4J_LOG_REQUESTS:false}
+      log-responses: ${LC4J_LOG_RESPONSES:false}
+      max-tokens: 8192
+    chat-model:
+      base-url: https://api.deepseek.com
+      api-key: ${DEEPSEEK_API_KEY}
+      model-name: deepseek-chat
+      log-requests: ${LC4J_LOG_REQUESTS:false}
+      log-responses: ${LC4J_LOG_RESPONSES:false}
+      max-tokens: 8192
+
+# 添加 COS 对象存储配置（需要从腾讯云获取）
+cos:
+  client:
+    host: https://hao1-1348297834.cos.ap-beijing.myqcloud.com
+    secretId: ${COS_SECRET_ID}
+    secretKey: ${COS_SECRET_KEY}
+    region: ap-beijing
+    bucket: hao1-1348297834
+
+code:
+  deploy-mode: local
+  deploy-cos-prefix: /deploy
+  source-cos-prefix: /source-code
+
+coding:
+  ci:
+    trigger-url: ${CODING_CI_TRIGGER_URL:}
+    username: ${CODING_CI_USERNAME:}
+    token: ${CODING_CI_TOKEN:}
+    ref: ${CODING_CI_REF:master}
+    connect-timeout-seconds: 10
+    read-timeout-ms: 120000
+
+# 配置actuator的监控端点，默认只暴露健康检查
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: always
+  health:
+    redis:
+      enabled: false  # 保持 Redis 健康检查开启
+
+# RAG 服务配置
+rag:
+  enabled: false
+  mock: false  # 使用真实 Python 服务
+  service:
+    url: http://localhost:8001  # Python 服务端口
+    timeout: 120000  # 超时时间 120 秒（2 分钟）
+  features:
+    vector: true
+    graph: true
+    web: false
+
+# Resilience4j 配置
+resilience4j:
+  # 1. 重试机制 (Retry)
+  retry:
+    instances:
+      aiService:
+        max-attempts: 2                   # 最大重试次数
+        wait-duration: 2s                 # 每次重试间隔 2秒
+        enable-exponential-backoff: true  # 开启指数退避 (2s -> 4s -> 8s)
+        exponential-backoff-multiplier: 2
+        retry-exceptions:                 # 哪些异常需要重试？
+          - java.net.SocketTimeoutException
+          - java.io.IOException
+          - org.springframework.web.client.ResourceAccessException
+        ignore-exceptions:                # 哪些异常不重试？(比如 401 账号密码错误，重试也没用)
+          - com.hao.haoaicode.exception.BusinessException
+
+  # 2. 熔断机制 (Circuit Breaker)
+  circuitbreaker:
+    instances:
+      aiService:
+        register-health-indicator: true
+        sliding-window-size: 10           # 滑动窗口大小 (统计最近 10 次请求)
+        minimum-number-of-calls: 5        # 至少请求 5 次才开始计算失败率
+        permitted-number-of-calls-in-half-open-state: 3 # 半开状态下允许通过的请求数
+        automatic-transition-from-open-to-half-open-enabled: true # 自动从“打开”转为“半开”
+        wait-duration-in-open-state: 10s  # 熔断 10秒后，进入半开状态尝试恢复
+        failure-rate-threshold: 50        # 失败率超过 50% 就熔断
+        event-consumer-buffer-size: 10
+
+  # 限流器配置（可选）
+  ratelimiter:
+    configs:
+      default:
+        # 限流周期：1秒
+        limit-refresh-period: 1s
+        # 每个周期允许的请求数：10个
+        limit-for-period: 10
+        # 等待许可的超时时间：5秒
+        timeout-duration: 5s
+    instances:
+      aiService:
+        base-config: default
+        # AI 服务限流：每秒5个请求
+        limit-for-period: 5
+
+  # 超时配置（可选）
+  timelimiter:
+    configs:
+      default:
+        # 超时时间：120秒
+        timeout-duration: 120s
+        # 取消运行中的 Future
+        cancel-running-future: true
+    instances:
+      aiService:
+        base-config: default
+        timeout-duration: 180s
+
+logging:
+  file:
+    name: logs/hao-ai-code.log
+  charset:
+    console: UTF-8
