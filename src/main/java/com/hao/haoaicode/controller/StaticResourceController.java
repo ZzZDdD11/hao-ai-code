@@ -2,6 +2,7 @@ package com.hao.haoaicode.controller;
 
 
 import com.hao.haoaicode.config.CosClientConfig;
+import com.hao.haoaicode.core.handler.JsonMessageStreamHandler;
 import com.qcloud.cos.COSClient;
 import com.qcloud.cos.exception.CosServiceException;
 import com.qcloud.cos.model.COSObject;
@@ -21,6 +22,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.HandlerMapping;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
 
 import static com.hao.haoaicode.constant.AppConstant.CODE_OUTPUT_ROOT_DIR;
 
@@ -57,38 +60,83 @@ public class StaticResourceController {
             @PathVariable String deployKey,
             HttpServletRequest request) {
         try {
-            // 从请求属性中拿到原始匹配路径，例如：/static/{deployKey}/index.html
+            // 预览模式：deployKey 形如 codeGenType_appId（例如 VUE_PROJECT_123）
+            int underscore = deployKey.lastIndexOf('_');
+            if (underscore > 0 && underscore < deployKey.length() - 1) {
+                String idPart = deployKey.substring(underscore + 1);
+                try {
+                    long appId = Long.parseLong(idPart);
+                    String resourcePath = (String) request.getAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE);
+                    resourcePath = resourcePath.substring(("/static/" + deployKey).length());
+                    if (resourcePath.isEmpty()) {
+                        HttpHeaders headers = new HttpHeaders();
+                        headers.add("Location", request.getRequestURI() + "/");
+                        return new ResponseEntity<>(headers, HttpStatus.MOVED_PERMANENTLY);
+                    }
+                    String path = resourcePath.replace('\\', '/');
+                    while (path.startsWith("/")) {
+                        path = path.substring(1);
+                    }
+                    Map<String, String> files = JsonMessageStreamHandler.getGeneratedFiles(appId);
+                    if (!files.isEmpty()) {
+                        String key = path;
+                        if (key.isEmpty() || "/".equals(key)) {
+                            key = "index.html";
+                        }
+                        String content = files.get(key);
+                        // 兼容前端可能访问 dist/index.html，而模型通常生成根目录 index.html
+                        if (content == null && key.startsWith("dist/")) {
+                            String fallbackKey = key.substring("dist/".length());
+                            content = files.get(fallbackKey);
+                            if (content != null) {
+                                key = fallbackKey;
+                            }
+                        } else if (content == null && "index.html".equals(key)) {
+                            // 反向兼容：如果模型生成 dist/index.html，而前端访问 index.html
+                            String fallbackKey = "dist/index.html";
+                            content = files.get(fallbackKey);
+                            if (content != null) {
+                                key = fallbackKey;
+                            }
+                        }
+                        if (content != null) {
+                            byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+                            InputStreamResource resource = new InputStreamResource(new java.io.ByteArrayInputStream(bytes));
+                            HttpHeaders headers = new HttpHeaders();
+                            headers.add("Content-Type", getContentTypeWithCharset(key));
+                            headers.setContentLength(bytes.length);
+                            return new ResponseEntity<>(resource, headers, HttpStatus.OK);
+                        }
+                    }
+                    // 若内存中未命中，则继续走本地 / COS 逻辑
+                } catch (NumberFormatException ignored) {
+                }
+            }
+
             String resourcePath = (String) request.getAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE);
-            // 去掉 /static/{deployKey} 前缀，只保留后面的相对路径部分
             resourcePath = resourcePath.substring(("/static/" + deployKey).length());
-            // 如果只访问到目录（没有带结尾的 /），做一次 301 重定向，补上 /
             if (resourcePath.isEmpty()) {
                 HttpHeaders headers = new HttpHeaders();
                 headers.add("Location", request.getRequestURI() + "/");
                 return new ResponseEntity<>(headers, HttpStatus.MOVED_PERMANENTLY);
             }
-            // 如果访问的是目录（以 / 结尾），默认返回 index.html
             if (resourcePath.equals("/")) {
                 resourcePath = "/index.html";
             }
-            // 先尝试从本地预览目录读取文件：{CODE_OUTPUT_ROOT_DIR}/{deployKey}/{resourcePath}
             String filePath = PREVIEW_ROOT_DIR + "/" + deployKey + resourcePath;
             File file = new File(filePath);
             if (file.exists()) {
                 org.springframework.core.io.Resource resource = new FileSystemResource(file);
                 return ResponseEntity.ok()
-                        // 根据文件扩展名设置合适的 Content-Type
                         .header("Content-Type", getContentTypeWithCharset(filePath))
                         .body(resource);
             }
 
-            // 本地没有对应文件时，回源到 COS 获取对象内容
             String objectKey = buildCosObjectKey(deployKey, resourcePath);
             COSObject cosObject = cosClient.getObject(cosClientConfig.getBucket(), objectKey);
             ObjectMetadata metadata = cosObject.getObjectMetadata();
             InputStreamResource resource = new InputStreamResource(cosObject.getObjectContent());
             HttpHeaders headers = new HttpHeaders();
-            // 优先使用 COS 存储时记录的 Content-Type，没有则根据后缀推断
             String contentType = metadata == null ? null : metadata.getContentType();
             if (contentType == null || contentType.isBlank()) {
                 contentType = getContentTypeWithCharset(objectKey);
@@ -100,14 +148,11 @@ public class StaticResourceController {
             }
             return new ResponseEntity<>(resource, headers, HttpStatus.OK);
         } catch (CosServiceException e) {
-            // COS 返回 404 时，转换为 HTTP 404
             if (e.getStatusCode() == 404) {
                 return ResponseEntity.notFound().build();
             }
-            // 其它 COS 异常返回 500
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         } catch (Exception e) {
-            // 兜底异常处理，避免异常栈直接抛到前端
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }

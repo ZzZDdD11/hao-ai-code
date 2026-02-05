@@ -14,16 +14,10 @@ import dev.langchain4j.store.memory.chat.ChatMemoryStore;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBucket;
 import org.redisson.api.RedissonClient;
-import cn.hutool.json.JSONArray;
-import cn.hutool.json.JSONObject;
-import cn.hutool.json.JSONUtil;
 
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -32,21 +26,16 @@ import java.util.stream.Collectors;
  * 特性：
  * 1. Redis 作为热数据缓存，快速读取
  * 2. MySQL 作为持久化存储，Redis 未命中时自动恢复
- * 3. 支持 COS 大消息的透明加载
- * 4. Cache-Aside 模式保证数据一致性
  */
 @Slf4j
 public class RedissonChatMemoryStore implements ChatMemoryStore {
 
     private static final String KEY_PREFIX = "chat_memory:";
     private static final int MAX_MESSAGES = 20;
-    private static final Set<String> CONTENT_TOOL_NAMES = Set.of("writeFile", "writeBatchFiles");
-
     private final RedissonClient redissonClient;
     private final Duration ttl;
     private final ChatHistoryMapper chatHistoryMapper;
     private final CosManager cosManager;
-    private final Map<String, List<ChatMessage>> localCache = new ConcurrentHashMap<>();
 
     public RedissonChatMemoryStore(RedissonClient redissonClient, 
                                     Duration ttl,
@@ -59,34 +48,20 @@ public class RedissonChatMemoryStore implements ChatMemoryStore {
     }
 
     /**
-     * 读取消息
+     * 从缓存读取记忆消息
      */
     @Override
     public List<ChatMessage> getMessages(Object memoryId) {
-        String key = buildKey(memoryId);
+        String key = buildKey(memoryId); // chat_memory:memoryId
         try {
-            List<ChatMessage> cached = localCache.get(key);
-            if (cached != null && !cached.isEmpty()) {
-                return new ArrayList<>(cached);
-            }
-
-
-
             // 1. 先查 Redis
             RBucket<String> bucket = redissonClient.getBucket(key);
             String json = bucket.get();
-
             if (json != null && !json.isEmpty()) {
-                String sanitizedJson = sanitizeToolCallArgumentsJson(json);
-                if (!sanitizedJson.equals(json)) {
-                    bucket.set(sanitizedJson, ttl);
-                    json = sanitizedJson;
-                }
                 List<ChatMessage> messages = ChatMessageDeserializer.messagesFromJson(json);
                 if (messages != null && !messages.isEmpty()) {
-                    localCache.put(key, new ArrayList<>(messages));
+                    return messages;
                 }
-                return messages;
             }
 
             // 2. Redis 未命中，从 MySQL 恢复
@@ -96,7 +71,6 @@ public class RedissonChatMemoryStore implements ChatMemoryStore {
             if (!messages.isEmpty()) {
                 String recoveredJson = ChatMessageSerializer.messagesToJson(messages);
                 bucket.set(recoveredJson, ttl);
-                localCache.put(key, new ArrayList<>(messages));
                 log.info("从 MySQL 恢复记忆到 Redis, memoryId: {}, count: {}", memoryId, messages.size());
             }
 
@@ -113,22 +87,15 @@ public class RedissonChatMemoryStore implements ChatMemoryStore {
      */
     @Override
     public void updateMessages(Object memoryId, List<ChatMessage> messages) {
-        
         String key = buildKey(memoryId);
 
         try {
             RBucket<String> bucket = redissonClient.getBucket(key);
             if (messages == null || messages.isEmpty()) {
                 bucket.delete();
-                localCache.remove(key);
                 return;
             }
-            localCache.put(key, new ArrayList<>(messages));
             String json = ChatMessageSerializer.messagesToJson(messages);
-            String sanitizedJson = sanitizeToolCallArgumentsJson(json);
-            if (!sanitizedJson.equals(json)) {
-                json = sanitizedJson;
-            }
             bucket.set(json, ttl);
 
             log.debug("Updated messages in Redis, memoryId: {}, count: {}", memoryId, messages.size());
@@ -146,7 +113,6 @@ public class RedissonChatMemoryStore implements ChatMemoryStore {
         try {
             RBucket<String> bucket = redissonClient.getBucket(key);
             bucket.delete();
-            localCache.remove(key);
             log.debug("Deleted messages from Redis, memoryId: {}", memoryId);
         } catch (Exception e) {
             log.error("Failed to delete messages from Redis, memoryId: {}", memoryId, e);
@@ -157,7 +123,7 @@ public class RedissonChatMemoryStore implements ChatMemoryStore {
         return KEY_PREFIX + memoryId.toString();
     }
 
-
+        // 从 MySQL 加载长期记忆
         private List<ChatMessage> loadFromMySQL(Object memoryId) {
         try {
             Long appId = parseAppId(memoryId);
@@ -188,7 +154,11 @@ public class RedissonChatMemoryStore implements ChatMemoryStore {
             return new ArrayList<>();
         }
     }
-
+    /**
+     * 从 ChatHistory 转换为 ChatMessage格式，适配 LangChain4j
+     * @param history
+     * @return
+     */
     private ChatMessage toChatMessage(ChatHistory history) {
         try {
             String content = history.getMessage();
@@ -212,7 +182,11 @@ public class RedissonChatMemoryStore implements ChatMemoryStore {
             return null;
         }
     }
-
+    /**
+     * 从 memoryId 中解析出 appId
+     * @param memoryId
+     * @return
+     */
     private Long parseAppId(Object memoryId) {
         if (memoryId == null) {
             return null;
@@ -231,112 +205,6 @@ public class RedissonChatMemoryStore implements ChatMemoryStore {
         }
     }
 
-    private String sanitizeToolCallArgumentsJson(String json) {
-        try {
-            JSONArray messages = JSONUtil.parseArray(json);
-            boolean changed = false;
-            for (Object msgObj : messages) {
-                if (!(msgObj instanceof JSONObject)) {
-                    continue;
-                }
-                JSONObject msg = (JSONObject) msgObj;
-                JSONArray toolRequests = msg.getJSONArray("toolExecutionRequests");
-                if (toolRequests != null) {
-                    changed |= sanitizeToolExecutionRequests(toolRequests);
-                }
-                JSONArray toolCalls = msg.getJSONArray("tool_calls");
-                if (toolCalls != null) {
-                    changed |= sanitizeOpenAiToolCalls(toolCalls);
-                }
-            }
-            return changed ? JSONUtil.toJsonStr(messages) : json;
-        } catch (Exception e) {
-            log.warn("Failed to sanitize tool call arguments", e);
-            return json;
-        }
-    }
 
-    private boolean sanitizeToolExecutionRequests(JSONArray toolRequests) {
-        boolean changed = false;
-        for (Object reqObj : toolRequests) {
-            if (!(reqObj instanceof JSONObject)) {
-                continue;
-            }
-            JSONObject req = (JSONObject) reqObj;
-            String name = req.getStr("name");
-            if (!CONTENT_TOOL_NAMES.contains(name)) {
-                continue;
-            }
-            String arguments = req.getStr("arguments");
-            String sanitized = sanitizeArguments(name, arguments);
-            if (sanitized != null && !sanitized.equals(arguments)) {
-                req.set("arguments", sanitized);
-                changed = true;
-            }
-        }
-        return changed;
-    }
-
-    private boolean sanitizeOpenAiToolCalls(JSONArray toolCalls) {
-        boolean changed = false;
-        for (Object callObj : toolCalls) {
-            if (!(callObj instanceof JSONObject)) {
-                continue;
-            }
-            JSONObject call = (JSONObject) callObj;
-            JSONObject function = call.getJSONObject("function");
-            if (function == null) {
-                continue;
-            }
-            String name = function.getStr("name");
-            if (!CONTENT_TOOL_NAMES.contains(name)) {
-                continue;
-            }
-            String arguments = function.getStr("arguments");
-            String sanitized = sanitizeArguments(name, arguments);
-            if (sanitized != null && !sanitized.equals(arguments)) {
-                function.set("arguments", sanitized);
-                changed = true;
-            }
-        }
-        return changed;
-    }
-
-    private String sanitizeArguments(String toolName, String arguments) {
-        if (arguments == null || arguments.isBlank()) {
-            return arguments;
-        }
-        try {
-            JSONObject args = JSONUtil.parseObj(arguments);
-            if ("writeFile".equals(toolName)) {
-                String content = args.getStr("content");
-                if (content != null) {
-                    args.set("contentLength", content.length());
-                    args.set("contentOmitted", true);
-                    args.remove("content");
-                }
-            } else if ("writeBatchFiles".equals(toolName)) {
-                Object filesObj = args.get("files");
-                if (filesObj != null) {
-                    JSONArray files = JSONUtil.parseArray(filesObj);
-                    for (Object fileObj : files) {
-                        if (fileObj instanceof JSONObject) {
-                            JSONObject file = (JSONObject) fileObj;
-                            String content = file.getStr("content");
-                            if (content != null) {
-                                file.set("contentLength", content.length());
-                                file.set("contentOmitted", true);
-                                file.remove("content");
-                            }
-                        }
-                    }
-                    args.set("files", files);
-                }
-            }
-            return JSONUtil.toJsonStr(args);
-        } catch (Exception e) {
-            return arguments;
-        }
-    }
 
 }

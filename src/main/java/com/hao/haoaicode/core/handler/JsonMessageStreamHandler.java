@@ -12,6 +12,8 @@ import com.hao.haoaicode.constant.AppConstant;
 import com.hao.haoaicode.manager.CosManager;
 import com.hao.haoaicode.model.entity.User;
 import com.hao.haoaicode.model.enums.ChatHistoryMessageTypeEnum;
+import com.hao.haoaicode.service.ConversationHistoryRecorder;
+import com.hao.haoaicode.service.impl.ConversationHistoryRecorderImpl;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.service.TokenStream;
 import jakarta.annotation.Resource;
@@ -41,9 +43,12 @@ import java.util.concurrent.TimeUnit;
 @Component
 public class JsonMessageStreamHandler {
 
+    private final ConversationHistoryRecorderImpl conversationHistoryRecorderImpl;
+
     @Resource
     private ChatMessageRouter chatMessageRouter;
-
+    @Resource
+    private ConversationHistoryRecorder conversationHistoryRecorder;
     @Resource
     private CosManager cosManager;
 
@@ -62,6 +67,10 @@ public class JsonMessageStreamHandler {
             .expireAfterWrite(10, TimeUnit.MINUTES)
             .maximumSize(1000)
             .build();
+
+    JsonMessageStreamHandler(ConversationHistoryRecorderImpl conversationHistoryRecorderImpl) {
+        this.conversationHistoryRecorderImpl = conversationHistoryRecorderImpl;
+    }
 
     // 获取应用ID对应的所有生成文件
     public static Map<String, String> getGeneratedFiles(long appId) {
@@ -152,8 +161,16 @@ public class JsonMessageStreamHandler {
                                     "data", "\n\n【解析】未识别到任何文件块输出，请检查模型输出格式（<<<FILE:...>>> / <<<END_FILE>>> / <<<DONE>>>）。\n"
                             )));
                         } else {
-                            // 在内存中缓存当前 appId 对应的文件集（只读视图，避免被外部修改）,用于即时预览
-                            APP_ID_TO_FILES.put(appId, Collections.unmodifiableMap(modelFiles));
+                            // 合并本次生成的文件与历史缓存，支持增量更新（新文件覆盖同名旧文件）
+                            Map<String, String> mergedFiles = new LinkedHashMap<>();
+                            Map<String, String> previous = APP_ID_TO_FILES.getIfPresent(appId);
+                            if (previous != null && !previous.isEmpty()) {
+                                mergedFiles.putAll(previous);
+                            }
+                            mergedFiles.putAll(modelFiles);
+
+                            // 在内存中缓存当前 appId 对应的文件集（只读视图，避免被外部修改），用于即时预览
+                            APP_ID_TO_FILES.put(appId, Collections.unmodifiableMap(mergedFiles));
                             sink.next(JSONUtil.toJsonStr(Map.of(
                                     "type", "ai_response",
                                     "data", "\n\n【预览】已将生成的 Vue 项目写入内存缓存。可立即预览（30分钟有效）\n"
@@ -161,13 +178,13 @@ public class JsonMessageStreamHandler {
 
                             // 计算云端源码目录的 baseKey（相当于一个“目录前缀”）
                             String baseKey = buildSourceBaseKey(appId);
-                            // 将所有文本文件批量上传到对象存储（COS）
-                            boolean uploaded = cosManager.uploadTextFiles(baseKey, modelFiles);
+                            // 将所有文本文件批量上传到对象存储（COS）。使用合并后的完整文件集，确保包含 package.json 等关键文件
+                            boolean uploaded = cosManager.uploadTextFiles(baseKey, mergedFiles);
                             if (uploaded) {
                                 // 规范化目录 key，并写入 Redis，标记当前 appId 最新源码所在的云端目录
                                 String normalizedBaseKey = ensureDirKey(baseKey);
                                 stringRedisTemplate.opsForValue().set(String.format("code:source:latest:%d", appId), normalizedBaseKey);
-                                // 上传成功后，文件仍然保留在内存，由Caffeine 负责按过期时间淘汰
+                                // 上传成功后，文件仍然保留在内存，由 Caffeine 负责按过期时间淘汰
                                 sink.next(JSONUtil.toJsonStr(Map.of(
                                         "type", "ai_response",
                                         "data", "\n\n【源码上传】已上传到云端源码目录。\n"
@@ -182,7 +199,7 @@ public class JsonMessageStreamHandler {
                         }
 
                         // 将完整的 AI 回复存入后端对话历史，用于后续查看和上下文追溯
-                        chatMessageRouter.route(appId, aiResponse, ChatHistoryMessageTypeEnum.AI.getValue(), loginUser.getId());
+                        conversationHistoryRecorder.recordAiMessage(appId, aiResponse, loginUser.getId());
 
                         // 记录本次项目生成的总耗时（从开始到全部完成）
                         long totalDurationMs = (System.nanoTime() - generationStartNs) / 1_000_000;

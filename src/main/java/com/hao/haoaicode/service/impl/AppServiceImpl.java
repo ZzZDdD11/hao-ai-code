@@ -18,6 +18,7 @@ import com.hao.haoaicode.exception.ErrorCode;
 import com.hao.haoaicode.exception.ThrowUtils;
 import com.hao.haoaicode.manager.CosManager;
 import com.hao.haoaicode.mapper.AppMapper;
+import com.hao.haoaicode.model.BuildResult;
 import com.hao.haoaicode.model.dto.app.AppAddRequest;
 import com.hao.haoaicode.model.dto.app.AppQueryRequest;
 import com.hao.haoaicode.model.entity.App;
@@ -33,7 +34,9 @@ import com.hao.haoaicode.ratelimit.annotation.RateLimit;
 import com.hao.haoaicode.review.RagEnhancementService;
 import com.hao.haoaicode.review.model.CodeAuditResponse;
 import com.hao.haoaicode.service.AppService;
+import com.hao.haoaicode.service.BuildClient;
 import com.hao.haoaicode.service.ChatHistoryService;
+import com.hao.haoaicode.service.ConversationHistoryRecorder;
 import com.hao.haoaicode.service.ScreenshotService;
 import com.hao.haoaicode.service.UserService;
 import com.mybatisflex.core.query.QueryWrapper;
@@ -93,6 +96,10 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     private StringRedisTemplate stringRedisTemplate;
     @Resource
     private CosManager cosManager;
+    @Resource
+    private ConversationHistoryRecorder conversationHistoryRecorder;
+    @Resource
+    private BuildClient buildClient;
 
     @Value("${code.deploy-cos-prefix:/deploy}")
     private String deployCosPrefix;
@@ -202,50 +209,41 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         ThrowUtils.throwIf(codeGenTypeEnum == null, ErrorCode.SYSTEM_ERROR, "不支持的代码生成类型");
 
         if (codeGenTypeEnum == CodeGenTypeEnum.VUE_PROJECT) {
-            // VUE 项目：从 COS 上的源码目录构建部署版本
-            String normalizedBaseKey = stringRedisTemplate.opsForValue().get(String.format("code:source:latest:%d", appId));
+            // 1. 从 Redis 获取最新源码目录 key
+            String normalizedBaseKey = stringRedisTemplate.opsForValue()
+                    .get(String.format("code:source:latest:%d", appId));
             if (StrUtil.isBlank(normalizedBaseKey)) {
                 throw new BusinessException(ErrorCode.SYSTEM_ERROR, "应用代码不存在，请先生成代码");
             }
 
-            // 每次部署生成新的 deployKey，避免 COS 覆盖导致读到旧版本
+            // 2. 每次部署生成新的 deployKey，避免 COS 覆盖导致读到旧版本
             deployKey = RandomUtil.randomString(8);
 
-            // 创建一个临时目录来存储从 COS 下载下来的源码
-            String tempDirName = "vue_deploy_tmp_" + appId + "_" + System.currentTimeMillis();
-            String tempDirPath = AppConstant.CODE_OUTPUT_ROOT_DIR + File.separator + tempDirName;
-            File tempDir = new File(tempDirPath);
+            // 3. 调用构建服务构建 Vue 项目并上传 dist 到 COS
+            BuildResult buildResult = buildClient.buildVueProject(appId, normalizedBaseKey, deployKey);
+            if (buildResult == null || !buildResult.isSuccess()) {
+                String baseMsg = (buildResult != null && StrUtil.isNotBlank(buildResult.getMessage()))
+                        ? buildResult.getMessage()
+                        : "构建服务调用失败";
+                String detail = buildResult != null ? buildResult.getDetailLog() : null;
 
-            boolean downloaded = cosManager.downloadDirectory(normalizedBaseKey, tempDir);
-            ThrowUtils.throwIf(!downloaded, ErrorCode.SYSTEM_ERROR, "从 COS 下载源码失败");
-
-            // 以临时目录作为构建输入，生成 dist
-            boolean buildSuccess = vueProjectBuilder.buildProject(tempDirPath);
-            if (!buildSuccess) {
-                String detail = vueProjectBuilder.getLastError();
                 if (StrUtil.isNotBlank(detail)) {
                     int maxLen = 4000;
                     if (detail.length() > maxLen) {
                         detail = detail.substring(0, maxLen) + "\n...(truncated)";
                     }
-                    throw new BusinessException(ErrorCode.SYSTEM_ERROR, "Vue 项目构建失败，请检查代码和依赖\n\n" + detail);
+                    throw new BusinessException(
+                            ErrorCode.SYSTEM_ERROR,
+                            "Vue 项目构建失败，请检查代码和依赖\n\n" + baseMsg + "\n\n" + detail
+                    );
                 }
-                throw new BusinessException(ErrorCode.SYSTEM_ERROR, "Vue 项目构建失败，请检查代码和依赖");
+                throw new BusinessException(
+                        ErrorCode.SYSTEM_ERROR,
+                        "Vue 项目构建失败，请检查代码和依赖\n\n" + baseMsg
+                );
             }
 
-            File distDir = new File(tempDirPath, "dist");
-            ThrowUtils.throwIf(!distDir.exists(), ErrorCode.SYSTEM_ERROR, "Vue 项目构建完成但未生成 dist 目录");
-            File indexHtml = new File(distDir, "index.html");
-            ThrowUtils.throwIf(!indexHtml.exists(), ErrorCode.SYSTEM_ERROR, "Vue 项目构建完成但未生成 index.html");
-
-            String deployDirKey = normalizeCosDirKey(deployCosPrefix) + deployKey + "/";
-            boolean uploaded = cosManager.uploadDirectory(deployDirKey, distDir);
-            ThrowUtils.throwIf(!uploaded, ErrorCode.SYSTEM_ERROR, "上传 dist 到 COS 失败");
-
-            String indexKey = deployDirKey + "index.html";
-            boolean indexUploaded = cosManager.uploadFileWithContentType(indexKey, indexHtml, "text/html; charset=utf-8");
-            ThrowUtils.throwIf(!indexUploaded, ErrorCode.SYSTEM_ERROR, "上传 index.html 到 COS 失败");
-
+            // 4. 构建成功，更新应用部署信息
             App updateApp = new App();
             updateApp.setId(appId);
             updateApp.setDeployKey(deployKey);
@@ -318,7 +316,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "不支持的代码生成类型");
         }
         // 5. 将用户消息存储到对话历史
-        chatMessageRouter.route(appId, message, ChatHistoryMessageTypeEnum.USER.getValue(), loginUser.getId());
+        conversationHistoryRecorder.recordUserMessage(appId, message, loginUser.getId());
         // 6. 设置监控上下文
         MonitorContextHolder.setContext(MonitorContext.builder()
                 .userId(loginUser.getId().toString())
@@ -332,52 +330,52 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
                     MonitorContextHolder.clearContext();
                     log.info("代码生成完成，appId: {}, 触发代码质量检查", appId);
                     
-                    // 异步触发代码质量检查
-                    CompletableFuture.runAsync(() -> {
-                        try {
-                            // 等待一小段时间，确保文件已保存
-                            Thread.sleep(500);
-                            
-                            // 1. 获取生成的代码
-                            String generatedCode = getGeneratedCodeFromFile(appId, codeGenTypeEnum);
-                            
-                            if (StrUtil.isNotBlank(generatedCode)) {
-                                // 2. 调用代码质量检查
-                                log.info("开始质量检查代码，appId: {}, 代码长度: {}", appId, generatedCode.length());
-                                CodeAuditResponse qualityResult = ragEnhancementService.checkCodeQuality(
-                                    generatedCode, 
-                                    getLanguageFromCodeType(codeGenTypeEnum)
-                                );
-                                
-                                // 3. 处理质量检查结果
-                                if (qualityResult != null && qualityResult.getAuditResult() != null) {
-                                    String riskLevel = qualityResult.getAuditResult().getRiskLevel();
-                                    Integer score = qualityResult.getAuditResult().getSecurityScore();
-                                    log.info("代码质量检查完成，appId: {}, 风险等级: {}, 质量评分: {}", 
-                                        appId, riskLevel, score);
-                                    
-                                    // 4. 保存质量检查结果到 Redis
-                                    saveAuditResult(appId, qualityResult);
-                                    
-                                    // 5. 高危代码告警
-                                    if ("HIGH".equals(riskLevel)) {
-                                        log.warn("⚠️ 检测到高危规范问题！appId: {}, 问题数: {}", 
-                                            appId, 
-                                            qualityResult.getAuditResult().getVulnerabilities() != null ? 
-                                                qualityResult.getAuditResult().getVulnerabilities().size() : 0);
-                                    }
-                                } else {
-                                    log.warn("质量检查结果为空，appId: {}", appId);
-                                }
-                            } else {
-                                log.warn("未找到生成的代码，appId: {}", appId);
-                            }
-                            
-                        } catch (Exception e) {
-                            log.error("代码质量检查失败，appId: {}, error: {}", appId, e.getMessage());
-                            // 质量检查失败不影响主流程
-                        }
-                    });
+//                    // 异步触发代码质量检查
+//                    CompletableFuture.runAsync(() -> {
+//                        try {
+//                            // 等待一小段时间，确保文件已保存
+//                            Thread.sleep(500);
+//
+//                            // 1. 获取生成的代码
+//                            String generatedCode = getGeneratedCodeFromFile(appId, codeGenTypeEnum);
+//
+//                            if (StrUtil.isNotBlank(generatedCode)) {
+//                                // 2. 调用代码质量检查
+//                                log.info("开始质量检查代码，appId: {}, 代码长度: {}", appId, generatedCode.length());
+//                                CodeAuditResponse qualityResult = ragEnhancementService.checkCodeQuality(
+//                                    generatedCode,
+//                                    getLanguageFromCodeType(codeGenTypeEnum)
+//                                );
+//
+//                                // 3. 处理质量检查结果
+//                                if (qualityResult != null && qualityResult.getAuditResult() != null) {
+//                                    String riskLevel = qualityResult.getAuditResult().getRiskLevel();
+//                                    Integer score = qualityResult.getAuditResult().getSecurityScore();
+//                                    log.info("代码质量检查完成，appId: {}, 风险等级: {}, 质量评分: {}",
+//                                        appId, riskLevel, score);
+//
+//                                    // 4. 保存质量检查结果到 Redis
+//                                    saveAuditResult(appId, qualityResult);
+//
+//                                    // 5. 高危代码告警
+//                                    if ("HIGH".equals(riskLevel)) {
+//                                        log.warn("⚠️ 检测到高危规范问题！appId: {}, 问题数: {}",
+//                                            appId,
+//                                            qualityResult.getAuditResult().getVulnerabilities() != null ?
+//                                                qualityResult.getAuditResult().getVulnerabilities().size() : 0);
+//                                    }
+//                                } else {
+//                                    log.warn("质量检查结果为空，appId: {}", appId);
+//                                }
+//                            } else {
+//                                log.warn("未找到生成的代码，appId: {}", appId);
+//                            }
+//
+//                        } catch (Exception e) {
+//                            log.error("代码质量检查失败，appId: {}, error: {}", appId, e.getMessage());
+//                            // 质量检查失败不影响主流程
+//                        }
+//                    });
 
                 });
 
@@ -533,36 +531,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
             default -> "java";
         };
     }
-    
-    /**
-     * 从 Redis 缓存中获取生成的代码（已废弃，改用文件系统）
-     * 
-     * @param appId 应用ID
-     * @return 生成的代码
-     */
-    @Deprecated
-    private String getGeneratedCode(Long appId) {
-        try {
-            // 假设代码存储在 Redis 中，key 格式为 "generated_code:{appId}"
-            String key = "generated_code:" + appId;
-            
-            // 使用 StringRedisTemplate 或 RedisTemplate 读取
-            // 这里需要注入 RedisTemplate
-            String code = stringRedisTemplate.opsForValue().get(key);
-            
-            if (StrUtil.isNotBlank(code)) {
-                log.info("从 Redis 读取到代码，appId: {}, 长度: {}", appId, code.length());
-                return code;
-            }
-            
-            log.warn("Redis 中未找到代码，appId: {}", appId);
-            return null;
-            
-        } catch (Exception e) {
-            log.error("从 Redis 读取代码失败: {}", e.getMessage());
-            return null;
-        }
-    }
+
 
     /**
      * 将质量检查结果保存到 Redis

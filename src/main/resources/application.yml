@@ -196,3 +196,7 @@ logging:
     name: logs/hao-ai-code.log
   charset:
     console: UTF-8
+
+build:
+  service:
+    url: http://localhost:8002
