@@ -3,6 +3,8 @@ package com.hao.haoaicode.buffer;
 import com.hao.haoaicode.mapper.ChatHistoryMapper;
 import com.hao.haoaicode.model.dto.chathistory.ChatHistoryDTO;
 import com.hao.haoaicode.model.entity.ChatHistory;
+import com.hao.haoaicode.monitor.AppMetricsCollector;
+
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -29,10 +31,10 @@ public class ChatHistoryFlushService {
 
     @Resource
     private MessageBufferService messageBufferService;
-
     @Resource
     private ChatHistoryMapper chatHistoryMapper;
-
+    @Resource
+    private AppMetricsCollector appMetricsCollector;
     /**
      * 定时批量刷盘
      * 每 5 秒执行一次
@@ -54,6 +56,8 @@ public class ChatHistoryFlushService {
             // 批量插入
             chatHistoryMapper.insertBatch(entities);
             log.info("批量刷盘成功，写入 {} 条聊天记录", entities.size());
+            // 进行指标监控
+            appMetricsCollector.recordHistoricalBatch("success", entities.size());
 
         } catch (Exception e) {
             log.error("批量刷盘失败，{} 条消息丢失: {}", batch.size(), e.getMessage(), e);

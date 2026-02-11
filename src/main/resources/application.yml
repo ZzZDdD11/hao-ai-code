@@ -107,13 +107,17 @@ coding:
     connect-timeout-seconds: 10
     read-timeout-ms: 120000
 
-# 配置actuator的监控端点，默认只暴露健康检查
+# 配置actuator的监控端点
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus
+        include: health,info,prometheus,metrics
   endpoint:
+    metrics:
+      enabled: true # 开启metrics端点
+    prometheus:
+      enabled: true # 开启prometheus端点
     health:
       show-details: always
   health:

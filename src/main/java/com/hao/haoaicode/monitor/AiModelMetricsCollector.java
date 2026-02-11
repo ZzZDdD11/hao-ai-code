@@ -8,7 +8,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
-
+/**
+ * Micrometer封装层，对外提供记录指标的方法
+ */
 @Component
 @Slf4j
 public class AiModelMetricsCollector {
@@ -16,7 +18,6 @@ public class AiModelMetricsCollector {
     @Resource
     private MeterRegistry meterRegistry;
 
-    // 移除：所有 ConcurrentHashMap 缓存都不需要，Micrometer 内部已处理
 
     /**
      * 记录请求次数

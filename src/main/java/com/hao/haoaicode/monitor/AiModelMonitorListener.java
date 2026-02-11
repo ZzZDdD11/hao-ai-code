@@ -12,7 +12,13 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
-
+/**
+ * - LangChain4j 的回调监听器 ，挂在“模型调用生命周期”上。
+- 在不同阶段回调：
+    - onRequest：请求开始时调用
+    - onResponse：收到响应时调用
+    - onError：发生错误时调用
+ */
 @Component
 @Slf4j
 public class AiModelMonitorListener implements ChatModelListener {

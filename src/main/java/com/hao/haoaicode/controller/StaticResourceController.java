@@ -2,7 +2,7 @@ package com.hao.haoaicode.controller;
 
 
 import com.hao.haoaicode.config.CosClientConfig;
-import com.hao.haoaicode.core.handler.JsonMessageStreamHandler;
+import com.hao.haoaicode.service.ProjectGenerationPostProcessor;
 import com.qcloud.cos.COSClient;
 import com.qcloud.cos.exception.CosServiceException;
 import com.qcloud.cos.model.COSObject;
@@ -46,6 +46,9 @@ public class StaticResourceController {
     @Resource
     private COSClient cosClient;
 
+    @Resource
+    private ProjectGenerationPostProcessor projectGenerationPostProcessor;
+
     /**
      * 提供静态资源访问，支持目录重定向
      * 访问格式：http://localhost:8123/api/static/{deployKey}[/{fileName}]
@@ -77,7 +80,7 @@ public class StaticResourceController {
                     while (path.startsWith("/")) {
                         path = path.substring(1);
                     }
-                    Map<String, String> files = JsonMessageStreamHandler.getGeneratedFiles(appId);
+                    Map<String, String> files = projectGenerationPostProcessor.getGeneratedFiles(appId);
                     if (!files.isEmpty()) {
                         String key = path;
                         if (key.isEmpty() || "/".equals(key)) {

@@ -1,6 +1,7 @@
 package com.hao.haoaicode.manager;
 
 import com.hao.haoaicode.config.CosClientConfig;
+import com.hao.haoaicode.monitor.AppMetricsCollector;
 import com.qcloud.cos.COSClient;
 import com.qcloud.cos.model.*;
 import jakarta.annotation.Resource;
@@ -29,6 +30,8 @@ public class CosManager {
 
     @Resource
     private COSClient cosClient;
+    @Resource
+    private AppMetricsCollector appMetricsCollector;
 
     /**
      * 上传对象
@@ -231,8 +234,14 @@ public class CosManager {
             return false;
         }
     }
-
+    /**
+     * 上传多个文本文件到 COS
+     * @param baseKey 基础键（目录路径）
+     * @param relativePathToContent 相对路径到内容的映射
+     * @return 是否所有文件上传成功
+     */
     public boolean uploadTextFiles(String baseKey, java.util.Map<String, String> relativePathToContent) {
+        long startTime = System.currentTimeMillis();
         if (relativePathToContent == null || relativePathToContent.isEmpty()) {
             log.warn("上传源码到COS：文件集合为空，baseKey: {}", baseKey);
             return false;
@@ -249,6 +258,9 @@ public class CosManager {
                 return false;
             }
         }
+        long endTime = System.currentTimeMillis();
+        // 进行监控指标收集
+        appMetricsCollector.recordCosUpload("upload_success",endTime - startTime);
         return true;
     }
 

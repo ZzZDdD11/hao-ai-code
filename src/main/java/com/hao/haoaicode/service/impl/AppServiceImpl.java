@@ -5,6 +5,9 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hao.haoaicode.ai.AiCodeGenTypeRoutingService;
 import com.hao.haoaicode.ai.AiCodeGenTypeRoutingServiceFactory;
@@ -27,6 +30,7 @@ import com.hao.haoaicode.model.enums.ChatHistoryMessageTypeEnum;
 import com.hao.haoaicode.model.enums.CodeGenTypeEnum;
 import com.hao.haoaicode.model.vo.AppVO;
 import com.hao.haoaicode.model.vo.UserVO;
+import com.hao.haoaicode.monitor.AppMetricsCollector;
 import com.hao.haoaicode.monitor.MonitorContext;
 import com.hao.haoaicode.monitor.MonitorContextHolder;
 import com.hao.haoaicode.ratelimit.RateLimitType;
@@ -52,6 +56,7 @@ import reactor.core.publisher.Flux;
 
 import java.io.File;
 import java.io.Serializable;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.ArrayList;
@@ -100,6 +105,10 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     private ConversationHistoryRecorder conversationHistoryRecorder;
     @Resource
     private BuildClient buildClient;
+    @Resource
+    private MeterRegistry meterRegistry;
+    @Resource
+    private AppMetricsCollector appMetricsCollector;
 
     @Value("${code.deploy-cos-prefix:/deploy}")
     private String deployCosPrefix;
@@ -299,6 +308,8 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     @RateLimit(key = "chat", rate = 5, rateInterval = 60, limitType = RateLimitType.USER,
             message = "每分钟最多发送5条消息")
     public Flux<String> chatToGenCode(Long appId, String message, User loginUser) {
+        // start 记录请求开始时间
+        long startTime = System.currentTimeMillis();
         // 1. 参数校验
         ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用 ID 不能为空");
         ThrowUtils.throwIf(StrUtil.isBlank(message), ErrorCode.PARAMS_ERROR, "用户消息不能为空");
@@ -327,7 +338,30 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         Flux<String> codeStream = aiCodeGeneratorFacade.generateAndSaveCodeStream(message, codeGenTypeEnum, appId, loginUser);
         // 8. 收集生成的代码，进行处理并存储到对话历史
         return codeStream.doFinally(signalType -> {
+                long endTime = System.currentTimeMillis();
+
+                //  Reactor 的 SignalType 映射 status 值
+                String status;
+                switch (signalType) {
+                    case ON_COMPLETE:
+                        status = "success";
+                        break;
+                    case ON_ERROR:
+                        status = "error";
+                        break;
+                    case CANCEL:
+                        status = "cancel"; // 看你要不要单独区分，不需要就也当 error
+                        break;
+                    default:
+                        status = "other";
+                }
+                long durationMs = endTime - startTime;
+                // 记录接口耗时
+                appMetricsCollector.recordTimeConsumption("chatToGenCode", status, durationMs);
+
+
                     MonitorContextHolder.clearContext();
+
                     log.info("代码生成完成，appId: {}, 触发代码质量检查", appId);
                     
 //                    // 异步触发代码质量检查
