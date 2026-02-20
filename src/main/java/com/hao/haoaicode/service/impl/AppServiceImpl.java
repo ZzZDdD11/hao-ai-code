@@ -326,6 +326,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         if (codeGenTypeEnum == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "不支持的代码生成类型");
         }
+        
         // 5. 将用户消息存储到对话历史
         conversationHistoryRecorder.recordUserMessage(appId, message, loginUser.getId());
         // 6. 设置监控上下文

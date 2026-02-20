@@ -1,5 +1,7 @@
 package com.hao.haoaicode.monitor;
 
+import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.message.ChatMessageSerializer;
 import dev.langchain4j.model.chat.listener.ChatModelErrorContext;
 import dev.langchain4j.model.chat.listener.ChatModelListener;
 import dev.langchain4j.model.chat.listener.ChatModelRequestContext;
@@ -9,8 +11,10 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 /**
  * - LangChain4j 的回调监听器 ，挂在“模型调用生命周期”上。
@@ -48,6 +52,17 @@ public class AiModelMonitorListener implements ChatModelListener {
         
         // 获取模型名称
         String modelName = requestContext.chatRequest().modelName();
+
+        try {
+            List<ChatMessage> messages = requestContext.chatRequest().messages();
+            int messageCount = messages != null ? messages.size() : 0;
+            String json = ChatMessageSerializer.messagesToJson(messages != null ? messages : List.of());
+            int promptBytes = json.getBytes(StandardCharsets.UTF_8).length;
+            aiModelMetricsCollector.recordPromptPayload(modelName, messageCount, promptBytes);
+        } catch (Exception e) {
+            log.debug("记录 prompt 体量失败, modelName: {}", modelName, e);
+        }
+
         // 记录请求指标
         aiModelMetricsCollector.recordRequest(modelName, "started");
     }
@@ -112,9 +127,13 @@ public class AiModelMonitorListener implements ChatModelListener {
         TokenUsage tokenUsage = responseContext.chatResponse().metadata().tokenUsage();
         
         if (tokenUsage != null) {
-            aiModelMetricsCollector.recordTokenUsage( modelName, "input", tokenUsage.inputTokenCount());
-            aiModelMetricsCollector.recordTokenUsage( modelName, "output", tokenUsage.outputTokenCount());
+            aiModelMetricsCollector.recordTokenUsage(modelName, "input", tokenUsage.inputTokenCount());
+            aiModelMetricsCollector.recordTokenUsage(modelName, "output", tokenUsage.outputTokenCount());
             aiModelMetricsCollector.recordTokenUsage(modelName, "total", tokenUsage.totalTokenCount());
+
+            aiModelMetricsCollector.recordTokenUsageSample(modelName, "input", tokenUsage.inputTokenCount());
+            aiModelMetricsCollector.recordTokenUsageSample(modelName, "output", tokenUsage.outputTokenCount());
+            aiModelMetricsCollector.recordTokenUsageSample(modelName, "total", tokenUsage.totalTokenCount());
         }
     }
 }

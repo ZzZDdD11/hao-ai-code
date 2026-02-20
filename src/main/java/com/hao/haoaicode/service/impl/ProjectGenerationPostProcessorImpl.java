@@ -3,7 +3,10 @@ package com.hao.haoaicode.service.impl;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.LongAdder;
 
 import org.checkerframework.checker.units.qual.C;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,10 +15,15 @@ import org.springframework.stereotype.Service;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.RemovalCause;
 import com.hao.haoaicode.manager.CosManager;
 import com.hao.haoaicode.monitor.AppMetricsCollector;
 import com.hao.haoaicode.service.ProjectGenerationPostProcessor;
 
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.binder.cache.CaffeineCacheMetrics;
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
 
 @Service
@@ -29,6 +37,13 @@ public class ProjectGenerationPostProcessorImpl implements ProjectGenerationPost
     String sourceCosPrefix;
     @Resource
     AppMetricsCollector appMetricsCollector;
+    @Resource
+    MeterRegistry meterRegistry;
+    // - 含义：记录每个 appId 当前在内存缓存里占用的体量快照（文件数、字符数）。
+    // - 用途：当同一个 appId 再次生成（覆盖/增量合并）时，可以拿到旧快照 prev ，与新快照 next 做差量更新（ next - prev ），避免每次都全量遍历整个缓存来算总量。
+    private final ConcurrentMap<Long, CacheStats> cacheStatsByAppId = new ConcurrentHashMap<>();
+    private final LongAdder totalCachedFiles = new LongAdder();
+    private final LongAdder totalCachedChars = new LongAdder();
 
     // 多文件协议相关标记
     private static final String FILE_MARKER_PREFIX = "<<<FILE:";
@@ -36,10 +51,69 @@ public class ProjectGenerationPostProcessorImpl implements ProjectGenerationPost
     private static final String END_FILE_MARKER = "<<<END_FILE>>>";
     private static final String DONE_MARKER = "<<<DONE>>>";
 
-    private final Cache<Long,Map<String,String>> APP_ID_TO_FILES = Caffeine.newBuilder()
+    // 缓存：appId -> 所有生成的文件:（ filePath -> fileContent）
+    private final Cache<Long, Map<String, String>> APP_ID_TO_FILES = Caffeine.newBuilder()
             .expireAfterWrite(10, TimeUnit.MINUTES)
             .maximumSize(1000)
+            .recordStats()
+            .removalListener((Long key, Map<String, String> value, RemovalCause cause) -> onCacheRemoval(key, value, cause))
             .build();
+
+    @PostConstruct
+    public void initMetrics() {
+        CaffeineCacheMetrics.monitor(meterRegistry, APP_ID_TO_FILES, "app.codegen.generated_files_cache");
+
+        Gauge.builder("app.codegen.cache.total_files", totalCachedFiles, LongAdder::sum)
+                .register(meterRegistry);
+        Gauge.builder("app.codegen.cache.total_chars", totalCachedChars, LongAdder::sum)
+                .baseUnit("chars")
+                .register(meterRegistry);
+    }
+    
+    /**
+     * 处理ai生成的Vue工程结果
+     */
+    @Override
+    public ProjectGenerationResult processGeneration(long appId, String aiResponse) {
+        // 把ai生成的Vue工程结果解析为相对文件路径到文件内容的映射
+        Map<String, String> modelFiles = parseMultiFileProtocol(aiResponse);
+        if (modelFiles.isEmpty()) {
+            APP_ID_TO_FILES.invalidate(appId);
+            // 指标监控：记录没有生成文件的情况
+            appMetricsCollector.recordProjectGenerationResult("no_files");
+            return new ProjectGenerationResult(false, false);
+        }
+        // 指标监控：记录生成的文件数目和总字符数
+        int generatedFileCount = modelFiles.size();
+        long generatedChars = countChars(modelFiles);
+        // 指标监控：记录合并后的文件数目和总字符数
+        Map<String, String> mergedFiles = new LinkedHashMap<>();
+        // 获取之前appid对应的所有文件
+        Map<String, String> previous = APP_ID_TO_FILES.getIfPresent(appId);
+        
+        if (previous != null && !previous.isEmpty()) {
+            // 把历史文件都拷贝到 mergedFiles
+            mergedFiles.putAll(previous);
+        }
+        // 把本次生成的文件再放进去；如果某个文件路径相同，就会把旧内容覆盖为新内容。
+        mergedFiles.putAll(modelFiles);
+        // 指标监控：记录合并后的文件数目和总字符数
+        int mergedFileCount = mergedFiles.size();
+        long mergedChars = countChars(mergedFiles);
+        appMetricsCollector.recordCodeGenerationPayload(generatedFileCount, generatedChars, mergedFileCount, mergedChars);
+        
+        updateCacheStatsOnPut(appId, mergedFiles);
+        APP_ID_TO_FILES.put(appId, Collections.unmodifiableMap(mergedFiles));
+
+        boolean uploaded = uploadFilesToCos(appId, mergedFiles);
+        if (uploaded) {
+            appMetricsCollector.recordProjectGenerationResult("upload_success");
+        } else {
+            appMetricsCollector.recordProjectGenerationResult("upload_failed");
+        }
+        return new ProjectGenerationResult(true, uploaded);
+    }
+
     /**
      * 解析多文件，返回文件路径到文件内容的映射
      */
@@ -113,40 +187,6 @@ public class ProjectGenerationPostProcessorImpl implements ProjectGenerationPost
     }
 
     @Override
-    public ProjectGenerationResult processGeneration(long appId, String aiResponse) {
-        // 1. 解析多文件协议
-        Map<String, String> modelFiles = parseMultiFileProtocol(aiResponse);
-        if (modelFiles.isEmpty()) {
-            // 未解析出任何文件：清理缓存，并返回“无文件”
-            APP_ID_TO_FILES.invalidate(appId);
-            // 进行监控指标收集
-            appMetricsCollector.recordProjectGenerationResult("no_files");
-            return new ProjectGenerationResult(false, false);
-        }
-
-        // 2. 合并本次生成的文件与历史缓存，支持增量更新
-        Map<String, String> mergedFiles = new LinkedHashMap<>();
-        Map<String, String> previous = APP_ID_TO_FILES.getIfPresent(appId);
-        if (previous != null && !previous.isEmpty()) {
-            mergedFiles.putAll(previous);
-        }
-        mergedFiles.putAll(modelFiles);
-
-        // 3. 写入内存缓存（只读视图，用于预览）
-        APP_ID_TO_FILES.put(appId, Collections.unmodifiableMap(mergedFiles));
-
-        // 4. 上传到 COS，并更新 Redis 中的最新源码目录
-        boolean uploaded = uploadFilesToCos(appId, mergedFiles);
-        // 进行监控指标收集
-        if(uploaded){
-        appMetricsCollector.recordProjectGenerationResult("upload_success");
-        }else{
-            appMetricsCollector.recordProjectGenerationResult("upload_failed");
-        }
-        return new ProjectGenerationResult(true, uploaded);
-    }
-
-    @Override
     public Map<String, String> getGeneratedFiles(long appId) {
         Map<String, String> files = APP_ID_TO_FILES.getIfPresent(appId);
         return files != null ? files : Collections.emptyMap();
@@ -190,22 +230,26 @@ public class ProjectGenerationPostProcessorImpl implements ProjectGenerationPost
      * @return
      */
     private boolean uploadFilesToCos(long appId, Map<String, String> files) {
-    if (files == null || files.isEmpty()) {
-        return false;
-    }
-    // 构建 COS 存储路径的基础目录
-    String baseKey = buildSourceBaseKey(appId);
-    boolean uploaded = cosManager.uploadTextFiles(baseKey, files);
-    if (!uploaded) {
-        return false;
-    }
+        if (files == null || files.isEmpty()) {
+            return false;
+        }
+        String baseKey = buildSourceBaseKey(appId);
 
-    // 上传成功后，写 Redis 标记最新源码目录
-    String normalizedBaseKey = ensureDirKey(baseKey);
-    stringRedisTemplate.opsForValue()
-            .set(String.format("code:source:latest:%d", appId), normalizedBaseKey);
+        long startNs = System.nanoTime();
+        boolean uploaded = false;
+        try {
+            uploaded = cosManager.uploadTextFiles(baseKey, files);
+            return uploaded;
+        } finally {
+            long durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs);
+            appMetricsCollector.recordCosUpload(uploaded ? "success" : "failed", durationMs);
 
-    return true;
+            if (uploaded) {
+                String normalizedBaseKey = ensureDirKey(baseKey);
+                stringRedisTemplate.opsForValue()
+                        .set(String.format("code:source:latest:%d", appId), normalizedBaseKey);
+            }
+        }
     }
     /**
      * 归一化相对路径，去掉前导 '/' 并检查是否合法
@@ -256,6 +300,50 @@ public class ProjectGenerationPostProcessorImpl implements ProjectGenerationPost
      * @param key
      * @return
      */
+    private record CacheStats(int fileCount, long charCount) {
+    }
+
+    private void updateCacheStatsOnPut(long appId, Map<String, String> mergedFiles) {
+        CacheStats next = new CacheStats(mergedFiles != null ? mergedFiles.size() : 0, countChars(mergedFiles));
+        CacheStats prev = cacheStatsByAppId.put(appId, next);
+        if (prev == null) {
+            totalCachedFiles.add(next.fileCount());
+            totalCachedChars.add(next.charCount());
+            return;
+        }
+        totalCachedFiles.add((long) next.fileCount() - prev.fileCount());
+        totalCachedChars.add(next.charCount() - prev.charCount());
+    }
+
+    private void onCacheRemoval(Long appId, Map<String, String> value, RemovalCause cause) {
+        if (appId == null) {
+            return;
+        }
+        CacheStats removed = cacheStatsByAppId.remove(appId);
+        if (removed != null) {
+            totalCachedFiles.add(-removed.fileCount());
+            totalCachedChars.add(-removed.charCount());
+            return;
+        }
+        if (value != null) {
+            totalCachedFiles.add(-value.size());
+            totalCachedChars.add(-countChars(value));
+        }
+    }
+
+    private static long countChars(Map<String, String> files) {
+        if (files == null || files.isEmpty()) {
+            return 0L;
+        }
+        long sum = 0L;
+        for (String content : files.values()) {
+            if (content != null) {
+                sum += content.length();
+            }
+        }
+        return sum;
+    }
+
     private String ensureDirKey(String key) {
         if (key == null || key.isBlank()) {
             return "/";
@@ -269,5 +357,5 @@ public class ProjectGenerationPostProcessorImpl implements ProjectGenerationPost
         }
         return k;
     }
-    
+
 }
