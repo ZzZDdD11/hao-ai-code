@@ -31,8 +31,6 @@ import static com.hao.haoaicode.constant.AppConstant.CODE_OUTPUT_ROOT_DIR;
 @RequestMapping("/static")
 public class StaticResourceController {
 
-    // 应用生成根目录（用于浏览本地构建后的静态资源）
-    private static final String PREVIEW_ROOT_DIR = CODE_OUTPUT_ROOT_DIR;
 
     // 部署到 COS 时使用的对象存储前缀，例如：/deploy
     @Value("${code.deploy-cos-prefix:/deploy}")
@@ -50,72 +48,33 @@ public class StaticResourceController {
     private ProjectGenerationPostProcessor projectGenerationPostProcessor;
 
     /**
-     * 提供静态资源访问，支持目录重定向
-     * 访问格式：http://localhost:8123/api/static/{deployKey}[/{fileName}]
-     *
-     * 说明：
-     * - deployKey 一般对应某次部署生成的静态网站目录名
-     * - 优先从本地 PREVIEW_ROOT_DIR 查找（便于本地调试 / 预览）
-     * - 如果本地不存在，则回源到 COS 上的对应对象
+     * 静态资源访问入口（仅支持已部署站点）。
+     * <p>
+     * 路径模式：/static/{deployKey}/**
+     * <ul>
+     *   <li>deployKey 为部署标识（App.deployKey），对应 COS 中 /{deployCosPrefix}/{deployKey} 目录；</li>
+     *   <li>不再支持基于 codeGenType_appId 的本地 / 内存预览，预览请通过部署后的地址访问。</li>
+     * </ul>
+     * 访问流程：
+     * <ol>
+     *   <li>从请求中解析出相对资源路径 resourcePath；</li>
+     *   <li>若访问目录（末尾无文件名），重定向到加 / 的路径；</li>
+     *   <li>将 resourcePath 归一化，并拼接成 COS 对象 Key；</li>
+     *   <li>从 COS 读取对象流并返回给前端。</li>
+     * </ol>
+     */
+    /**
+     * 
+     * @param deployKey
+     * @param request
+     * @return 返回一个 HTTP 响应对象，body 是一个 Spring 的 Resource（也就是一个可读流，比如文件内容）
      */
     @GetMapping("/{deployKey}/**")
     public ResponseEntity<org.springframework.core.io.Resource> serveStaticResource(
             @PathVariable String deployKey,
             HttpServletRequest request) {
         try {
-            // 预览模式：deployKey 形如 codeGenType_appId（例如 VUE_PROJECT_123）
-            int underscore = deployKey.lastIndexOf('_');
-            if (underscore > 0 && underscore < deployKey.length() - 1) {
-                String idPart = deployKey.substring(underscore + 1);
-                try {
-                    long appId = Long.parseLong(idPart);
-                    String resourcePath = (String) request.getAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE);
-                    resourcePath = resourcePath.substring(("/static/" + deployKey).length());
-                    if (resourcePath.isEmpty()) {
-                        HttpHeaders headers = new HttpHeaders();
-                        headers.add("Location", request.getRequestURI() + "/");
-                        return new ResponseEntity<>(headers, HttpStatus.MOVED_PERMANENTLY);
-                    }
-                    String path = resourcePath.replace('\\', '/');
-                    while (path.startsWith("/")) {
-                        path = path.substring(1);
-                    }
-                    Map<String, String> files = projectGenerationPostProcessor.getGeneratedFiles(appId);
-                    if (!files.isEmpty()) {
-                        String key = path;
-                        if (key.isEmpty() || "/".equals(key)) {
-                            key = "index.html";
-                        }
-                        String content = files.get(key);
-                        // 兼容前端可能访问 dist/index.html，而模型通常生成根目录 index.html
-                        if (content == null && key.startsWith("dist/")) {
-                            String fallbackKey = key.substring("dist/".length());
-                            content = files.get(fallbackKey);
-                            if (content != null) {
-                                key = fallbackKey;
-                            }
-                        } else if (content == null && "index.html".equals(key)) {
-                            // 反向兼容：如果模型生成 dist/index.html，而前端访问 index.html
-                            String fallbackKey = "dist/index.html";
-                            content = files.get(fallbackKey);
-                            if (content != null) {
-                                key = fallbackKey;
-                            }
-                        }
-                        if (content != null) {
-                            byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
-                            InputStreamResource resource = new InputStreamResource(new java.io.ByteArrayInputStream(bytes));
-                            HttpHeaders headers = new HttpHeaders();
-                            headers.add("Content-Type", getContentTypeWithCharset(key));
-                            headers.setContentLength(bytes.length);
-                            return new ResponseEntity<>(resource, headers, HttpStatus.OK);
-                        }
-                    }
-                    // 若内存中未命中，则继续走本地 / COS 逻辑
-                } catch (NumberFormatException ignored) {
-                }
-            }
-
+            // 从 HandlerMapping 中获取完整路径，再去掉 /static/{deployKey} 前缀，得到相对资源路径
             String resourcePath = (String) request.getAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE);
             resourcePath = resourcePath.substring(("/static/" + deployKey).length());
             if (resourcePath.isEmpty()) {
@@ -123,16 +82,8 @@ public class StaticResourceController {
                 headers.add("Location", request.getRequestURI() + "/");
                 return new ResponseEntity<>(headers, HttpStatus.MOVED_PERMANENTLY);
             }
-            if (resourcePath.equals("/")) {
+            if ("/".equals(resourcePath)) {
                 resourcePath = "/index.html";
-            }
-            String filePath = PREVIEW_ROOT_DIR + "/" + deployKey + resourcePath;
-            File file = new File(filePath);
-            if (file.exists()) {
-                org.springframework.core.io.Resource resource = new FileSystemResource(file);
-                return ResponseEntity.ok()
-                        .header("Content-Type", getContentTypeWithCharset(filePath))
-                        .body(resource);
             }
 
             String objectKey = buildCosObjectKey(deployKey, resourcePath);
@@ -152,6 +103,7 @@ public class StaticResourceController {
             return new ResponseEntity<>(resource, headers, HttpStatus.OK);
         } catch (CosServiceException e) {
             if (e.getStatusCode() == 404) {
+                // COS 返回 404 时，转换为 HTTP 404
                 return ResponseEntity.notFound().build();
             }
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();

@@ -5,6 +5,8 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
+import com.hao.haoaicode.model.SemanticCacheResult;
+import com.hao.haoaicode.service.*;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 
@@ -37,12 +39,6 @@ import com.hao.haoaicode.ratelimit.RateLimitType;
 import com.hao.haoaicode.ratelimit.annotation.RateLimit;
 import com.hao.haoaicode.review.RagEnhancementService;
 import com.hao.haoaicode.review.model.CodeAuditResponse;
-import com.hao.haoaicode.service.AppService;
-import com.hao.haoaicode.service.BuildClient;
-import com.hao.haoaicode.service.ChatHistoryService;
-import com.hao.haoaicode.service.ConversationHistoryRecorder;
-import com.hao.haoaicode.service.ScreenshotService;
-import com.hao.haoaicode.service.UserService;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
 
@@ -109,7 +105,8 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     private MeterRegistry meterRegistry;
     @Resource
     private AppMetricsCollector appMetricsCollector;
-
+    @Resource
+    private SemanticCacheService semanticCacheService;
     @Value("${code.deploy-cos-prefix:/deploy}")
     private String deployCosPrefix;
 
@@ -335,6 +332,15 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
                 .appId(appId.toString())
                 .build());
         // 检查积分，扣除积分
+//        // 检查prompt是否重复，若重复且阈值大于0.9可直接复用代码
+//        SemanticCacheResult checkPrompt = semanticCacheService.checkPrompt(message, appId, codeGenTypeEnum);
+//        if(checkPrompt.isHit() && checkPrompt.getScore() >= 0.9){
+//            // 若命中，直接返回缓存的代码位置
+//            return Flux.just(checkPrompt.getCodeLocation());
+//        }else if(checkPrompt.isHit() && checkPrompt.getScore() >= 0.8){
+//            // 若命中，且相似度大于0.8，采取上下文策略
+//
+//        }
         // 7. 调用模型生成代码
         Flux<String> codeStream = aiCodeGeneratorFacade.generateAndSaveCodeStream(message, codeGenTypeEnum, appId, loginUser);
         // 8. 收集生成的代码，进行处理并存储到对话历史

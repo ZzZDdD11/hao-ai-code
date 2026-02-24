@@ -55,10 +55,13 @@ public interface ProjectGenerationPostProcessor {
          * 是否上传成功
          */ 
         private final boolean uploadSuccess;
+        // 本次源码的COS上的目录
+        private String sourceBaseKey; 
 
-        public ProjectGenerationResult(boolean hasFiles, boolean uploadSuccess) {
+        public ProjectGenerationResult(boolean hasFiles, boolean uploadSuccess, String sourceBaseKey) {
             this.hasFiles = hasFiles;
             this.uploadSuccess = uploadSuccess;
+            this.sourceBaseKey = sourceBaseKey;
         }
 
         public boolean hasFiles() {
@@ -67,6 +70,10 @@ public interface ProjectGenerationPostProcessor {
 
         public boolean isUploadSuccess() {
             return uploadSuccess;
+        }
+
+        public String getSourceBaseKey() {
+            return sourceBaseKey;
         }
     }
 }

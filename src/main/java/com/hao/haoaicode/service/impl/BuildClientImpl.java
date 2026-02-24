@@ -16,7 +16,7 @@ import java.util.Map;
 @Slf4j
 @Service
 public class BuildClientImpl implements BuildClient {
-
+    // 默认值http://localhost:8002
     @Value("${build.service.base-url:http://localhost:8002}")
     private String buildServiceBaseUrl;
 
@@ -28,10 +28,18 @@ public class BuildClientImpl implements BuildClient {
                 .setReadTimeout(Duration.ofMinutes(10))
                 .build();
     }
-
+    /**
+     * 调用构建服务构建 Vue 项目
+     * @param appId 应用 ID
+     * @param sourceKey 项目源码 COS 存储路径
+     * @param deployKey 项目部署 COS 存储路径
+     * @return 构建结果
+     */
     @Override
     public BuildResult buildVueProject(Long appId, String sourceKey, String deployKey) {
+        // api 路径
         String url = buildServiceBaseUrl + "/build/vue";
+
         try {
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("appId", appId);
@@ -39,7 +47,7 @@ public class BuildClientImpl implements BuildClient {
             requestBody.put("deployKey", deployKey);
 
             log.info("调用构建服务，url: {}, appId: {}, sourceKey: {}, deployKey: {}", url, appId, sourceKey, deployKey);
-
+            // 调用构建服务，POST 请求，把响应体反序列化成 BuildResult
             ResponseEntity<BuildResult> response = restTemplate.postForEntity(url, requestBody, BuildResult.class);
             BuildResult result = response.getBody();
             if (result == null) {

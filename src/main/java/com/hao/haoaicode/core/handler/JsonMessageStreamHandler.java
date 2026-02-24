@@ -9,8 +9,10 @@ import com.hao.haoaicode.buffer.ChatMessageRouter;
 import com.hao.haoaicode.constant.AppConstant;
 import com.hao.haoaicode.model.entity.User;
 import com.hao.haoaicode.model.enums.ChatHistoryMessageTypeEnum;
+import com.hao.haoaicode.model.enums.CodeGenTypeEnum;
 import com.hao.haoaicode.service.ConversationHistoryRecorder;
 import com.hao.haoaicode.service.ProjectGenerationPostProcessor;
+import com.hao.haoaicode.service.SemanticCacheService;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.service.TokenStream;
 import jakarta.annotation.Resource;
@@ -42,6 +44,9 @@ public class JsonMessageStreamHandler {
     @Resource
     private ProjectGenerationPostProcessor projectGenerationPostProcessor;
 
+    @Resource
+    private SemanticCacheService semanticCacheService;
+
     /**
      * 处理 TokenStream（VUE_PROJECT）
      * 直接消费 TokenStream，避免了反复序列化/反序列化 JSON 的开销
@@ -49,9 +54,15 @@ public class JsonMessageStreamHandler {
      * @param tokenStream 原始 TokenStream
      * @param appId       应用ID
      * @param loginUser   登录用户
+     * @param userMessage 本次用户输入的提示词（用于语义缓存等后处理）
+     * @param codeGenType 代码生成类型
      * @return 转换后的 Flux<String>（JSON格式）
      */
-    public Flux<String> handle(TokenStream tokenStream, long appId, User loginUser) {
+    public Flux<String> handle(TokenStream tokenStream,
+                               long appId,
+                               User loginUser,
+                               String userMessage,
+                               CodeGenTypeEnum codeGenType) {
         // 收集数据
         StringBuilder chatHistoryStringBuilder = new StringBuilder();
         StringBuilder displayBuffer = new StringBuilder();
@@ -63,6 +74,7 @@ public class JsonMessageStreamHandler {
         int[] lastSentLen = new int[]{0};
         // 用于跟踪已经见过的工具ID，判断是否是第一次调用
         // Set<String> seenToolIds = new HashSet<>();
+        // 记录开始的时间，用来统计耗时，nanoTime返回的是纳秒
         long generationStartNs = System.nanoTime();
 
         return Flux.create(sink -> {
@@ -99,7 +111,9 @@ public class JsonMessageStreamHandler {
                         
                         // 完整的 AI 回复，转换成字符串
                         String aiResponse = chatHistoryStringBuilder.toString();
-                        // 进行项目构建
+                        // - 解析多文件协议 → 得到 (path → content)
+                        // - 合并进 Caffeine 缓存（用于预览）
+                        // - 上传源码文件到 COS，更新 Redis 里的“最新源码路径”，并记录指标。
                         ProjectGenerationPostProcessor.ProjectGenerationResult result =
                                 projectGenerationPostProcessor.processGeneration(appId, aiResponse);
 
@@ -128,6 +142,24 @@ public class JsonMessageStreamHandler {
 
                         // 将完整的 AI 回复存入后端对话历史，用于后续查看和上下文追溯
                         conversationHistoryRecorder.recordAiMessage(appId, aiResponse, loginUser.getId());
+
+                        // 在代码生成完成后，将本次生成记录写入语义缓存版本记录
+                        try {
+                            if (result.isUploadSuccess()
+                                    && result.getSourceBaseKey() != null
+                                    && codeGenType == CodeGenTypeEnum.VUE_PROJECT) {
+                                semanticCacheService.savaCache(
+                                        userMessage,
+                                        appId,
+                                        loginUser.getId(),
+                                        codeGenType,
+                                        result.getSourceBaseKey(),
+                                        0.0d
+                                );
+                            }
+                        } catch (Exception e) {
+                            log.warn("保存语义缓存记录失败 appId: {}, error: {}", appId, e.getMessage());
+                        }
 
                         // 记录本次项目生成的总耗时（从开始到全部完成）
                         long totalDurationMs = (System.nanoTime() - generationStartNs) / 1_000_000;

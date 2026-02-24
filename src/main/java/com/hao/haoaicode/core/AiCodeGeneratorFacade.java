@@ -177,7 +177,13 @@ public class AiCodeGeneratorFacade {
             }
             case VUE_PROJECT -> {
                 TokenStream projectStream = service.generateVueProjectCodeStream(sessionId, userMessage);
-                yield streamHandlerExecutor.executeTokenStream(projectStream, appId, loginUser);
+                yield streamHandlerExecutor.executeTokenStream(
+                        projectStream,
+                        appId,
+                        loginUser,
+                        userMessage,
+                        CodeGenTypeEnum.VUE_PROJECT
+                );
             }
             default -> {
                 String errorMessage = "不支持的生成类型：" + codeGenTypeEnum.getValue();

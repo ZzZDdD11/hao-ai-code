@@ -14,10 +14,13 @@ import com.hao.haoaicode.exception.ErrorCode;
 import com.hao.haoaicode.exception.ThrowUtils;
 import com.hao.haoaicode.model.dto.app.*;
 import com.hao.haoaicode.model.entity.App;
+import com.hao.haoaicode.model.entity.AppCodeVersion;
 import com.hao.haoaicode.model.entity.User;
+import com.hao.haoaicode.model.vo.AppCodeVersionVO;
 import com.hao.haoaicode.model.vo.AppVO;
 import com.hao.haoaicode.service.AppService;
 import com.hao.haoaicode.service.ProjectDownloadService;
+import com.hao.haoaicode.service.SemanticCacheService;
 import com.hao.haoaicode.service.UserService;
 import com.mybatisflex.core.paginate.Page;
 
@@ -39,6 +42,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
+
 /**
  * 应用 控制层。
  *
@@ -54,6 +58,8 @@ public class AppController {
     private UserService userService;
     @Resource
     private ProjectDownloadService projectDownloadService;
+    @Resource
+    private SemanticCacheService semanticCacheService;
 
     /**
      * 更新应用（用户只能更新自己的应用名称）
@@ -380,6 +386,26 @@ public class AppController {
         Long appId = appService.createApp(appAddRequest, loginUser);
         return ResultUtils.success(appId.toString());
     }
+
+
+    @GetMapping("/{appId}/versions")
+    public BaseResponse<List<AppCodeVersionVO>> getAppVersions(@PathVariable Long appId, HttpServletRequest request) {
+        // 1. 基础校验
+        ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用ID无效");
+        // 2. 查询应用信息
+        App app = appService.getById(appId);
+        ThrowUtils.throwIf(app == null, ErrorCode.NOT_FOUND_ERROR, "应用不存在");
+        // 3. 权限校验：只有应用创建者可以查看版本
+        User loginUser = userService.getLoginUser(request);
+        if (!app.getUserId().equals(loginUser.getId())) {
+            throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "无权限查看该应用版本");
+        }
+        // 4. 查询应用代码版本
+        List<AppCodeVersionVO> versions = semanticCacheService.getAppVersions(appId);
+        return ResultUtils.success(versions);
+    }
+    
+    
 
 
 }

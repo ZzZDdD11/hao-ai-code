@@ -25,7 +25,13 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.binder.cache.CaffeineCacheMetrics;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
-
+/**
+ * 项目生成后处理服务实现类
+ * 1. 解析多文件协议，提取 filePath -> fileContent 的映射。
+ * 2. 缓存每个文件内容到内存（Caffeine Cache），用于预览。
+ * 3. 上传每个文件到 COS 存储桶，更新 Redis 里的“最新源码路径”。
+ * 4. 记录指标（如缓存命中率、上传耗时等）。
+ */
 @Service
 public class ProjectGenerationPostProcessorImpl implements ProjectGenerationPostProcessor {
 
@@ -33,7 +39,7 @@ public class ProjectGenerationPostProcessorImpl implements ProjectGenerationPost
     CosManager cosManager;
     @Resource
     StringRedisTemplate stringRedisTemplate;
-    @Value("${code.deploy-cos-prefix:/source-code}")
+    @Value("${code.source-cos-prefix:/source-code}")
     String sourceCosPrefix;
     @Resource
     AppMetricsCollector appMetricsCollector;
@@ -71,47 +77,41 @@ public class ProjectGenerationPostProcessorImpl implements ProjectGenerationPost
     }
     
     /**
-     * 处理ai生成的Vue工程结果
+     * 处理ai生成的Vue项目结果
+     * 
      */
     @Override
     public ProjectGenerationResult processGeneration(long appId, String aiResponse) {
-        // 把ai生成的Vue工程结果解析为相对文件路径到文件内容的映射
         Map<String, String> modelFiles = parseMultiFileProtocol(aiResponse);
         if (modelFiles.isEmpty()) {
             APP_ID_TO_FILES.invalidate(appId);
-            // 指标监控：记录没有生成文件的情况
             appMetricsCollector.recordProjectGenerationResult("no_files");
-            return new ProjectGenerationResult(false, false);
+            return new ProjectGenerationResult(false, false, null);
         }
-        // 指标监控：记录生成的文件数目和总字符数
         int generatedFileCount = modelFiles.size();
         long generatedChars = countChars(modelFiles);
-        // 指标监控：记录合并后的文件数目和总字符数
         Map<String, String> mergedFiles = new LinkedHashMap<>();
-        // 获取之前appid对应的所有文件
         Map<String, String> previous = APP_ID_TO_FILES.getIfPresent(appId);
-        
+
         if (previous != null && !previous.isEmpty()) {
-            // 把历史文件都拷贝到 mergedFiles
             mergedFiles.putAll(previous);
         }
-        // 把本次生成的文件再放进去；如果某个文件路径相同，就会把旧内容覆盖为新内容。
         mergedFiles.putAll(modelFiles);
-        // 指标监控：记录合并后的文件数目和总字符数
         int mergedFileCount = mergedFiles.size();
         long mergedChars = countChars(mergedFiles);
         appMetricsCollector.recordCodeGenerationPayload(generatedFileCount, generatedChars, mergedFileCount, mergedChars);
-        
+
         updateCacheStatsOnPut(appId, mergedFiles);
         APP_ID_TO_FILES.put(appId, Collections.unmodifiableMap(mergedFiles));
-
-        boolean uploaded = uploadFilesToCos(appId, mergedFiles);
+        String baseKey = buildSourceBaseKey(appId);
+        boolean uploaded = uploadFilesToCos(baseKey, appId, mergedFiles);
         if (uploaded) {
             appMetricsCollector.recordProjectGenerationResult("upload_success");
         } else {
             appMetricsCollector.recordProjectGenerationResult("upload_failed");
         }
-        return new ProjectGenerationResult(true, uploaded);
+        String normalizedBaseKey = uploaded ? ensureDirKey(baseKey) : null;
+        return new ProjectGenerationResult(true, uploaded, normalizedBaseKey);
     }
 
     /**
@@ -125,28 +125,32 @@ public class ProjectGenerationPostProcessorImpl implements ProjectGenerationPost
         }
 
         // DONE_MARKER 作为整体结束标记，只取它之前的内容参与解析
-        int doneIndex = text.lastIndexOf(DONE_MARKER);
-        String input = doneIndex >= 0 ? text.substring(0, doneIndex) : text;
+        int doneIndex = text.lastIndexOf(DONE_MARKER);//获取结束标记的位置
+        String input = doneIndex >= 0 ? text.substring(0, doneIndex) : text; // 截取结束标记之前的内容
 
         // 使用 LinkedHashMap 保证文件插入顺序
         Map<String, String> files = new LinkedHashMap<>();
         int idx = 0;
 
+        // 循环解析每个文件块，直到没有更多的 FILE_MARKER_PREFIX 出现
         while (true) {
-            // 查找下一个文件块起始标记
-            int start = input.indexOf(FILE_MARKER_PREFIX, idx);
+            // 查找文件块起始标记，从索引idx开始查找
+            int start = input.indexOf(FILE_MARKER_PREFIX, idx);//指定起始位置查找字符串
             if (start < 0) {
                 break;
             }
 
-            // 提取路径
+            // 找到路径起始的索引
             int pathStart = start + FILE_MARKER_PREFIX.length();
+            // 找到相对路径结束的索引
             int pathEnd = input.indexOf(FILE_MARKER_SUFFIX, pathStart);
             if (pathEnd < 0) {
                 // 缺少路径结束标记，认为协议格式异常
                 break;
             }
+            // 把相对路径截取出来，示例：<<<FILE:src/main/java/
             String rawPath = input.substring(pathStart, pathEnd).trim();
+            // 处理相对路径，去除首尾空格和路径分隔符。解析出干净的相对路径
             String relativePath = normalizeRelativePath(rawPath);
 
             // 文件内容起点：紧随路径结束标记之后，跳过紧邻的 \r 和 \n
@@ -167,19 +171,19 @@ public class ProjectGenerationPostProcessorImpl implements ProjectGenerationPost
 
             // 截取文件内容（不包含 END_FILE_MARKER 本身）
             String content = input.substring(contentStart, end);
-            // 去掉末尾多余的换行符
+            // 对截取的文件内容做清洗，去掉末尾多余的换行符
             if (content.endsWith("\r\n")) {
                 content = content.substring(0, content.length() - 2);
             } else if (content.endsWith("\n")) {
                 content = content.substring(0, content.length() - 1);
             }
 
-            // 只有在路径合法时才写入 Map
+            // 把清洗好的相对路径和对应的内容写入 Map
             if (relativePath != null) {
                 files.put(relativePath, content);
             }
 
-            // 将扫描指针移动到本次 END_FILE_MARKER 之后
+            // 将扫描指针移动到本次 END_FILE_MARKER 之后，准备解析下一个文件块
             idx = end + END_FILE_MARKER.length();
         }
 
@@ -219,22 +223,22 @@ public class ProjectGenerationPostProcessorImpl implements ProjectGenerationPost
         if (files == null || files.isEmpty()) {
             return false;
         }
-        return uploadFilesToCos(appId, files);
+        String baseKey = buildSourceBaseKey(appId);
+        return uploadFilesToCos(baseKey, appId, files);
     }
 
 
     /**
      * 上传文件到 COS
+     * @param baseKey
      * @param appId
      * @param files
      * @return
      */
-    private boolean uploadFilesToCos(long appId, Map<String, String> files) {
+    private boolean uploadFilesToCos(String baseKey, long appId, Map<String, String> files) {
         if (files == null || files.isEmpty()) {
             return false;
         }
-        String baseKey = buildSourceBaseKey(appId);
-
         long startNs = System.nanoTime();
         boolean uploaded = false;
         try {
@@ -243,7 +247,6 @@ public class ProjectGenerationPostProcessorImpl implements ProjectGenerationPost
         } finally {
             long durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs);
             appMetricsCollector.recordCosUpload(uploaded ? "success" : "failed", durationMs);
-
             if (uploaded) {
                 String normalizedBaseKey = ensureDirKey(baseKey);
                 stringRedisTemplate.opsForValue()
@@ -275,20 +278,19 @@ public class ProjectGenerationPostProcessorImpl implements ProjectGenerationPost
         return p;
     }
     /**
-     * 构建 COS 存储路径的基础目录
+     * 构建 COS 存储路径的基础目录,示例：source-code/1694582400000（appid）128000（当前时间戳）
      * @param appId
      * @return
      */
     private String buildSourceBaseKey(long appId) {
-        String prefix = (sourceCosPrefix == null || sourceCosPrefix.isBlank())
-                ? "/source-code"
-                : sourceCosPrefix.trim();
-
+        String prefix = (sourceCosPrefix == null || sourceCosPrefix.isBlank()) ? "/source-code" : sourceCosPrefix.trim();
+        // 替换 Windows 风格的路径分隔符为 '/'
         prefix = prefix.replace('\\', '/');
         if (!prefix.startsWith("/")) {
             prefix = "/" + prefix;
         }
         while (prefix.endsWith("/")) {
+            // 把结尾的 '/' 去掉
             prefix = prefix.substring(0, prefix.length() - 1);
         }
 
@@ -343,7 +345,11 @@ public class ProjectGenerationPostProcessorImpl implements ProjectGenerationPost
         }
         return sum;
     }
-
+    /**
+     * 确保 COS 存储路径以 '/' 结尾，格式清洗
+     * @param key
+     * @return
+     */
     private String ensureDirKey(String key) {
         if (key == null || key.isBlank()) {
             return "/";

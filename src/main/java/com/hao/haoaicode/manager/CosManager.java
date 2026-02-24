@@ -213,14 +213,24 @@ public class CosManager {
         String replaced = rest.replace(".cos.", ".cos-website.");
         return scheme + replaced;
     }
-
+    /**
+     * 
+     * @param key
+     * @param content
+     * @param contentType
+     * @return
+     */
     public boolean uploadTextFile(String key, String content, String contentType) {
+        // 准备对象Key（路径）
         String objectKey = normalizeObjectKey(key);
         try {
+            // 准备要上传的数据，转成字节流
             byte[] bytes = content == null ? new byte[0] : content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            // 准备元数据，设置内容类型和大小，这些信息会影响浏览器 / 客户端怎么处理这个对象。
             String finalContentType = (contentType == null || contentType.isBlank()) ? "application/octet-stream" : contentType;
-            com.qcloud.cos.model.ObjectMetadata metadata = createMetadata(bytes.length, objectKey, finalContentType);
-
+            // 创建好元数据
+            ObjectMetadata metadata = createMetadata(bytes.length, objectKey, finalContentType);
+            // 准备上传请求，指定桶、对象键、数据输入流和元数据
             PutObjectRequest request = new PutObjectRequest(
                     cosClientConfig.getBucket(),
                     objectKey,
@@ -242,17 +252,23 @@ public class CosManager {
      */
     public boolean uploadTextFiles(String baseKey, java.util.Map<String, String> relativePathToContent) {
         long startTime = System.currentTimeMillis();
+        // 边界检查
         if (relativePathToContent == null || relativePathToContent.isEmpty()) {
             log.warn("上传源码到COS：文件集合为空，baseKey: {}", baseKey);
             return false;
         }
+        // 对 baseKey 进行标准化处理，确保以 '/' 结尾且不包含开头的 '/'，例如deploy/vue/dist/
         String normalizedBaseKey = normalizeKey(baseKey);
+
         for (java.util.Map.Entry<String, String> entry : relativePathToContent.entrySet()) {
+            // 对相对路径进行标准化处理，确保不以 '/' 开头，例如index.html
             String relativePath = normalizeRelativePath(entry.getKey());
             if (relativePath == null) {
                 continue;
             }
+            // 拼接完整的对象键（COS 存储路径，示例：source-code/1694582400000（appid）/deploy/vue/dist/index.html）
             String objectKey = normalizedBaseKey + relativePath;
+            // 上传单文件到 COS
             boolean ok = uploadTextFile(objectKey, entry.getValue(), guessContentType(relativePath));
             if (!ok) {
                 return false;
@@ -311,7 +327,7 @@ public class CosManager {
             return false;
         }
     }
-
+    
     private String normalizeObjectKey(String key) {
         if (key == null || key.isBlank()) {
             return "";
@@ -322,17 +338,25 @@ public class CosManager {
         }
         return k;
     }
-
-    private com.qcloud.cos.model.ObjectMetadata createMetadata(long contentLength, String key, String contentType) {
-        com.qcloud.cos.model.ObjectMetadata metadata = new com.qcloud.cos.model.ObjectMetadata();
+    /**
+     * 创建 COS 对象元数据
+     * @param contentLength 内容长度
+     * @param key 对象键（路径）
+     * @param contentType 内容类型
+     * @return 对象元数据
+     */
+    private ObjectMetadata createMetadata(long contentLength, String key, String contentType) {
+        ObjectMetadata metadata = new ObjectMetadata();
         metadata.setContentLength(Math.max(0, contentLength));
+
         if (contentType != null && !contentType.isBlank()) {
             metadata.setContentType(contentType);
         }
+        // 设置内容处置为内联，浏览器会直接显示内容，而不是下载
         metadata.setContentDisposition("inline");
         return metadata;
     }
-
+    // 标准化 COS 存储路径：/xxx/
     private String normalizeKey(String key) {
         if (key == null || key.isBlank()) {
             return "";
@@ -346,7 +370,7 @@ public class CosManager {
         }
         return k;
     }
-
+    // 以标准化形式处理相对路径，确保不以 '/' 开头
     private String normalizeRelativePath(String relativePath) {
         if (relativePath == null || relativePath.isBlank()) {
             return null;
@@ -357,7 +381,11 @@ public class CosManager {
         }
         return p;
     }
-
+    /**
+     * 猜测文件内容类型
+     * @param fileKey 文件键（路径）
+     * @return 内容类型
+     */
     private String guessContentType(String fileKey) {
         String lower = fileKey == null ? "" : fileKey.toLowerCase();
         if (lower.endsWith(".html")) return "text/html; charset=UTF-8";

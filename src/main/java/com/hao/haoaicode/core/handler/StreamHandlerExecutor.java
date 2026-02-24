@@ -2,7 +2,6 @@ package com.hao.haoaicode.core.handler;
 
 import com.hao.haoaicode.model.entity.User;
 import com.hao.haoaicode.model.enums.CodeGenTypeEnum;
-import com.hao.haoaicode.service.ChatHistoryService;
 import dev.langchain4j.service.TokenStream;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -28,8 +27,12 @@ public class StreamHandlerExecutor {
     /**
      * 处理 TokenStream (VUE_PROJECT)
      */
-    public Flux<String> executeTokenStream(TokenStream tokenStream, long appId, User loginUser) {
-        return jsonMessageStreamHandler.handle(tokenStream, appId, loginUser);
+    public Flux<String> executeTokenStream(TokenStream tokenStream,
+                                           long appId,
+                                           User loginUser,
+                                           String userMessage,
+                                           CodeGenTypeEnum codeGenType) {
+        return jsonMessageStreamHandler.handle(tokenStream, appId, loginUser, userMessage, codeGenType);
     }
 
     /**
