@@ -69,7 +69,7 @@ public class AiCodeGeneratorServiceFactory {
                 return MessageWindowChatMemory.builder()
                     .id(memoryId)
                     .chatMemoryStore(chatMemoryStore)
-                    .maxMessages(10)
+                    .maxMessages(2)
                     .build();
             })
             //.tools(toolManager.getAllTools())

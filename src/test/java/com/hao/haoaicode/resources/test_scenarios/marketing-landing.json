@@ -1,0 +1,51 @@
+{
+  "name": "营销落地页 - Hero+功能区+页脚迭代",
+  "description": "生成单页营销站，然后逐步加模块和响应式设计。",
+  "appId": 376838878303350784,
+  "userId": 3,
+  "codeGenType": "VUE_PROJECT",
+  "rounds": [
+    {
+      "round": 1,
+      "prompt": "生成一个单页的营销落地页，使用 Vue3 + Vite。页面包含顶部导航、一个大号的 Hero 区（标题、副标题、主按钮），中间是3个产品卖点卡片，底部有简单页脚。",
+      "assertions": [
+        { "type": "build_success" },
+        { "type": "file_exists", "path": "src/views/HomeView.vue" },
+        {
+          "type": "file_contains_any",
+          "path": "src/views/HomeView.vue",
+          "keywords": ["Hero", "主按钮", "cta", "立即体验"]
+        },
+        {
+          "type": "file_contains_any",
+          "path": "src/views/HomeView.vue",
+          "keywords": ["卖点", "card", "优势"]
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "prompt": "在现有落地页基础上，增加一个“客户案例”模块，展示3个客户 Logo 和一句简短推荐语，放在卖点模块下面。",
+      "assertions": [
+        { "type": "build_success" },
+        {
+          "type": "file_contains_any",
+          "path": "src/views/HomeView.vue",
+          "keywords": ["客户案例", "案例", "testimonial", "logo"]
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "prompt": "为整个落地页增加基本的移动端响应式样式，要求在手机宽度下导航折叠为菜单按钮，Hero 区和卖点卡片改为单列布局。",
+      "assertions": [
+        { "type": "build_success" },
+        {
+          "type": "file_contains_any",
+          "path": "src/views/HomeView.vue",
+          "keywords": ["@media", "max-width", "移动端", "responsive"]
+        }
+      ]
+    }
+  ]
+}

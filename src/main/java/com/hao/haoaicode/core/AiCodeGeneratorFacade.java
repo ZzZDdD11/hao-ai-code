@@ -10,10 +10,13 @@ import com.hao.haoaicode.ai.agent.VuePlanningService;
 import com.hao.haoaicode.core.handler.StreamHandlerExecutor;
 import com.hao.haoaicode.exception.BusinessException;
 import com.hao.haoaicode.exception.ErrorCode;
+import com.hao.haoaicode.model.entity.AppTaskSummary;
 import com.hao.haoaicode.model.entity.User;
 import com.hao.haoaicode.model.enums.CodeGenCostEnum;
 import com.hao.haoaicode.model.enums.CodeGenTypeEnum;
 import com.hao.haoaicode.saver.CodeFileSaverExecutor;
+import com.hao.haoaicode.service.ProjectSpecService;
+import com.hao.haoaicode.service.TaskSummaryService;
 import com.hao.haoaicode.service.UserWalletService;
 
 import dev.langchain4j.service.TokenStream;
@@ -27,6 +30,7 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.io.File;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -45,6 +49,10 @@ public class AiCodeGeneratorFacade {
 
     @Resource
     private VuePlanningService vuePlanningService;
+    @Resource
+    private TaskSummaryService taskSummaryService;
+    @Resource
+    private ProjectSpecService projectSpecService;
 
     /**
      * 构建会话 ID
@@ -176,12 +184,13 @@ public class AiCodeGeneratorFacade {
                 yield streamHandlerExecutor.executeTextStream(codeStream, appId, loginUser, CodeGenTypeEnum.MULTI_FILE);
             }
             case VUE_PROJECT -> {
-                TokenStream projectStream = service.generateVueProjectCodeStream(sessionId, userMessage);
+                String finalPrompt = buildVueProjectPrompt(userMessage, appId);
+                TokenStream projectStream = service.generateVueProjectCodeStream(sessionId, finalPrompt);
                 yield streamHandlerExecutor.executeTokenStream(
                         projectStream,
                         appId,
                         loginUser,
-                        userMessage,
+                        finalPrompt,
                         CodeGenTypeEnum.VUE_PROJECT
                 );
             }
@@ -220,6 +229,32 @@ public class AiCodeGeneratorFacade {
 
 
     
+    private String buildVueProjectPrompt(String userMessage, Long appId) {
+        StringBuilder sb = new StringBuilder();
+        String projectSpecPrompt = projectSpecService.buildProjectSpecPrompt(appId);
+        if (projectSpecPrompt != null && !projectSpecPrompt.isBlank()) {
+            log.info("项目当前规格提示: {}", projectSpecPrompt);
+            sb.append(projectSpecPrompt).append("\n\n");
+        }
+        int historySize = 3;
+        List<AppTaskSummary> recentSummaries = taskSummaryService.listRecentSummaries(appId, historySize);
+        if (recentSummaries != null && !recentSummaries.isEmpty()) {
+            sb.append("[已完成的任务历史]\n");
+            for (int i = 0; i < recentSummaries.size(); i++) {
+                AppTaskSummary s = recentSummaries.get(i);
+                sb.append(i + 1).append(". 目标: ")
+                        .append(s.getPrompt() != null ? s.getPrompt() : "（无记录）")
+                        .append("；结果: ")
+                        .append(s.getResultSummary() != null ? s.getResultSummary() : "已生成部分页面和路由")
+                        .append("\n");
+            }
+            sb.append("\n");
+        }
+        sb.append("[当前需求]\n").append(userMessage);
+        return sb.toString();
+    }
+
+
 
     /**
      * 降级方法 (Fallback)

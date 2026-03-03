@@ -6,6 +6,8 @@ import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
 import com.hao.haoaicode.model.SemanticCacheResult;
+import com.hao.haoaicode.model.context.GenerationContext;
+import com.hao.haoaicode.model.context.GenerationContextHolder;
 import com.hao.haoaicode.service.*;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -49,6 +51,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.SignalType;
 
 import java.io.File;
 import java.io.Serializable;
@@ -109,7 +112,10 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     private SemanticCacheService semanticCacheService;
     @Value("${code.deploy-cos-prefix:/deploy}")
     private String deployCosPrefix;
-
+    @Resource
+    private TaskSummaryService taskSummaryService;
+    @Resource
+    private ProjectGenerationPostProcessor projectGenerationPostProcessor;
 
     /**
      * 查询应用信息
@@ -323,7 +329,15 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         if (codeGenTypeEnum == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "不支持的代码生成类型");
         }
-        
+        // 记录请求上下文
+        GenerationContext generationContext = new GenerationContext();
+        generationContext.setAppId(appId);
+        generationContext.setUserId(loginUser.getId());
+        generationContext.setCodeGenType(codeGenTypeStr);
+        generationContext.setUserPrompt(message);
+        generationContext.setStartTime(startTime);
+        GenerationContextHolder.setContext(generationContext);
+
         // 5. 将用户消息存储到对话历史
         conversationHistoryRecorder.recordUserMessage(appId, message, loginUser.getId());
         // 6. 设置监控上下文
@@ -343,7 +357,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
 //        }
         // 7. 调用模型生成代码
         Flux<String> codeStream = aiCodeGeneratorFacade.generateAndSaveCodeStream(message, codeGenTypeEnum, appId, loginUser);
-        // 8. 收集生成的代码，进行处理并存储到对话历史
+        // 8. 收集生成的代码
         return codeStream.doFinally(signalType -> {
                 long endTime = System.currentTimeMillis();
 
@@ -365,11 +379,37 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
                 long durationMs = endTime - startTime;
                 // 记录接口耗时
                 appMetricsCollector.recordTimeConsumption("chatToGenCode", status, durationMs);
-
+                generationContext.setEndTime(endTime);
+                generationContext.setSuccess(signalType == SignalType.ON_COMPLETE);
+                generationContext.setErrorMessage(signalType == SignalType.ON_ERROR ? "..." : null); // 如果有异常信息可以传进去
+                try {
+                    String normalizedBaseKey = stringRedisTemplate.opsForValue()
+                            .get(String.format("code:source:latest:%d", appId));
+                    generationContext.setSourceKey(normalizedBaseKey);
+                } catch (Exception ignored) {
+                }
+                if (generationContext.getTouchedFiles() == null || generationContext.getTouchedFiles().isEmpty()) {
+                    try {
+                        Map<String, String> files = projectGenerationPostProcessor.getGeneratedFiles(appId);
+                        if (files != null && !files.isEmpty()) {
+                            for (String path : files.keySet()) {
+                                generationContext.addTouchedFile(path);
+                            }
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+                try {
+                    // 把任务级上下文存到数据库
+                    taskSummaryService.generateAndSaveSummary(generationContext);
+                } finally  {
+                    // 销毁生成上下文的ThreadLocal
+                    GenerationContextHolder.clearContext();                
+                }
 
                     MonitorContextHolder.clearContext();
 
-                    log.info("代码生成完成，appId: {}, 触发代码质量检查", appId);
+                    //log.info("代码生成完成，appId: {}, 触发代码质量检查", appId);
                     
 //                    // 异步触发代码质量检查
 //                    CompletableFuture.runAsync(() -> {

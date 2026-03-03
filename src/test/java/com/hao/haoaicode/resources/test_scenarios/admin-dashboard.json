@@ -1,0 +1,70 @@
+{
+  "name": "后台管理系统 - 登录+用户管理多轮迭代",
+  "description": "从0生成后台管理后台系统，然后逐步加验证码、分页和暗色主题。",
+  "appId": 383870054301827072,
+  "userId": 3,
+  "codeGenType": "VUE_PROJECT",
+  "rounds": [
+    {
+      "round": 1,
+      "prompt": "帮我从0生成一个基于 Vue3 + Vite 的后台管理系统原型，要包含：登录页、仪表盘首页、用户管理页。登录页需要账号密码登录，用户管理页要有用户列表表格，可以增删改查的按钮，先不用接后端接口。",
+      "assertions": [
+        { "type": "build_success" },
+        { "type": "file_exists", "path": "src/views/LoginView.vue" },
+        { "type": "file_exists", "path": "src/views/DashboardView.vue" },
+        { "type": "file_exists", "path": "src/views/UserListView.vue" },
+        {
+          "type": "file_contains_any",
+          "path": "src/router/index.ts",
+          "keywords": ["Login", "UserList", "Dashboard"]
+        },
+        {
+          "type": "file_contains_any",
+          "path": "src/views/UserListView.vue",
+          "keywords": ["表格", "table", "el-table"]
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "prompt": "在现有项目基础上，给登录页增加图形验证码输入框。验证码输入框要放在密码下面，简单地用一个占位图片和输入框即可，不用接后端校验。",
+      "assertions": [
+        { "type": "build_success" },
+        {
+          "type": "file_contains_any",
+          "path": "src/views/LoginView.vue",
+          "keywords": ["验证码", "captcha"]
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "prompt": "给用户管理页的用户列表增加分页和搜索功能。分页要有每页条数选择，下方有分页组件。搜索可以根据用户名模糊搜索，目前只在前端做本地过滤即可。",
+      "assertions": [
+        { "type": "build_success" },
+        {
+          "type": "file_contains_any",
+          "path": "src/views/UserList.vue",
+          "keywords": ["分页", "pagination", "el-pagination"]
+        },
+        {
+          "type": "file_contains_any",
+          "path": "src/views/UserList.vue",
+          "keywords": ["搜索", "search", "el-input"]
+        }
+      ]
+    },
+    {
+      "round": 4,
+      "prompt": "在现有项目基础上，统一切换为暗色主题。要求侧边栏、顶部导航、页面背景整体变成暗色风格，但尽量不要破坏原有布局结构。",
+      "assertions": [
+        { "type": "build_success" },
+        {
+          "type": "file_contains_any",
+          "path": "src/App.vue",
+          "keywords": ["dark", "暗色", "background"]
+        }
+      ]
+    }
+  ]
+}

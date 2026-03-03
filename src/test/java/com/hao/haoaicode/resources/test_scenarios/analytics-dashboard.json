@@ -1,0 +1,47 @@
+{
+  "name": "数据分析控制台 - 图表+筛选+导出",
+  "description": "生成包含图表的数据分析控制台，并逐步增加筛选和导出功能。",
+  "appId": 376995147609755648,
+  "userId": 3,
+  "codeGenType": "VUE_PROJECT",
+  "rounds": [
+    {
+      "round": 1,
+      "prompt": "生成一个数据分析控制台原型，使用 Vue3 + Vite。主页包含一个顶部筛选条，下面有两个图表区域：一个折线图展示7天访问趋势，一个柱状图展示各模块访问对比。先用假数据即可。",
+      "assertions": [
+        { "type": "build_success" },
+        { "type": "file_exists", "path": "src/views/AnalyticsDashboard.vue" },
+        {
+          "type": "file_contains_any",
+          "path": "src/views/AnalyticsDashboard.vue",
+          "keywords": ["折线图", "line", "柱状图", "bar", "chart"]
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "prompt": "在现有控制台基础上，为顶部筛选条增加时间范围选择（最近7天、最近30天、自定义），切换选项时重新渲染假数据。",
+      "assertions": [
+        { "type": "build_success" },
+        {
+          "type": "file_contains_any",
+          "path": "src/views/AnalyticsDashboard.vue",
+          "keywords": ["最近7天", "最近30天", "自定义", "timeRange", "日期"]
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "prompt": "为数据分析控制台增加一个“导出数据”按钮，点击后将当前筛选条件下的表格数据导出为 CSV 文件，前端本地生成即可。",
+      "assertions": [
+        { "type": "build_success" },
+        {
+          "type": "file_contains_any",
+          "path": "src/views/AnalyticsDashboard.vue",
+          "keywords": ["导出", "export", "CSV"]
+        }
+      ]
+    }
+  ]
+}
+

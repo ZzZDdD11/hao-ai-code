@@ -1,5 +1,6 @@
 package com.hao.haoaicode.service.impl;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -17,6 +18,8 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.RemovalCause;
 import com.hao.haoaicode.manager.CosManager;
+import com.hao.haoaicode.model.context.GenerationContext;
+import com.hao.haoaicode.model.context.GenerationContextHolder;
 import com.hao.haoaicode.monitor.AppMetricsCollector;
 import com.hao.haoaicode.service.ProjectGenerationPostProcessor;
 
@@ -83,6 +86,13 @@ public class ProjectGenerationPostProcessorImpl implements ProjectGenerationPost
     @Override
     public ProjectGenerationResult processGeneration(long appId, String aiResponse) {
         Map<String, String> modelFiles = parseMultiFileProtocol(aiResponse);
+        // 把修改的文件路径添加到上下文
+        GenerationContext ctx = GenerationContextHolder.getContext();
+        if (ctx != null) {
+            for (String path : modelFiles.keySet()) {
+                ctx.addTouchedFile(path);
+            }
+        }
         if (modelFiles.isEmpty()) {
             APP_ID_TO_FILES.invalidate(appId);
             appMetricsCollector.recordProjectGenerationResult("no_files");
@@ -104,6 +114,9 @@ public class ProjectGenerationPostProcessorImpl implements ProjectGenerationPost
         updateCacheStatsOnPut(appId, mergedFiles);
         APP_ID_TO_FILES.put(appId, Collections.unmodifiableMap(mergedFiles));
         String baseKey = buildSourceBaseKey(appId);
+        if (ctx != null) {
+            ctx.setSourceKey(baseKey);
+        }
         boolean uploaded = uploadFilesToCos(baseKey, appId, mergedFiles);
         if (uploaded) {
             appMetricsCollector.recordProjectGenerationResult("upload_success");

@@ -143,7 +143,7 @@ public class JsonMessageStreamHandler {
                         // 将完整的 AI 回复存入后端对话历史，用于后续查看和上下文追溯
                         conversationHistoryRecorder.recordAiMessage(appId, aiResponse, loginUser.getId());
 
-                        // 在代码生成完成后，将本次生成记录写入语义缓存版本记录
+                        // 在代码生成完成后，将本次生成记录写入语义缓存、版本记录
                         try {
                             if (result.isUploadSuccess()
                                     && result.getSourceBaseKey() != null
